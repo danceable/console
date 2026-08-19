@@ -1,0 +1,12 @@
+invalid value "100.2" for flag --intArg: parse error
+this is a test description
+
+Usage:
+
+  this is a test usage
+
+Flags:
+
+      --boolArg     test bool argument
+      --intArg int  test int argument (default 666)
+  -h, --help        shows this help message.

@@ -1,0 +1,10 @@
+  -u, --username string       the user to authenticate as. [env: CONSOLE_TEST_USERNAME]
+  -a, --all                   targets every namespace.
+      --port int              the port to listen to. (default 80)
+  -r float                    the sampling ratio. (default 1.5)
+  -t, --timeout duration      the request timeout. (default 10s)
+      --retries uint          the number of retries. (default 3)
+  CONSOLE_TEST_SECRET string  the signing secret.
+      --threshold int         the alerting threshold.
+      --size uint             the maximum size.
+  -h, --help                  shows this help message.

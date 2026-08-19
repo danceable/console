@@ -1,0 +1,15 @@
+manages the pods.
+
+Usage:
+
+  Test pods [flags] <command> [command arguments]
+
+The command groups are:
+
+  nodes       manages the nodes of the pods.
+
+Flags:
+
+  -h, --help  shows this help message.
+
+Use "Test pods <command> --help" for more information about a command.

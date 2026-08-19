@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    strategy:
+        fail-fast: false
+        matrix:
+          os:
+            - ubuntu-latest
+          go:
+            - 1.26
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Go
+      uses: actions/setup-go@v7
+      with:
+        go-version: ${{ matrix.go }}
+
+    - name: Install dependencies
+      run: |
+        go mod download
+
+    - name: Check formatting
+      run: |
+        test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+    - name: Vet
+      run: |
+        go vet ./...
+
+    - name: Run Unit tests
+      run: |
+        go test -race -covermode atomic -coverprofile=covprofile ./...

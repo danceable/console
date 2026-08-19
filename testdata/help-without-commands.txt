@@ -1,0 +1,14 @@
+Test description
+
+Usage:
+
+  Test [flags] <command> [command arguments]
+
+The commands are:
+
+
+Flags:
+
+  -h, --help  shows this help message.
+
+Use "Test <command> --help" for more information about a command.

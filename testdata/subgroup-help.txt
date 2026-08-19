@@ -1,0 +1,15 @@
+manages the nodes of the pods.
+
+Usage:
+
+  kubectl pods nodes [flags] <command> [command arguments]
+
+The commands are:
+
+  list        lists the nodes the pods run on.
+
+Flags:
+
+  -h, --help  shows this help message.
+
+Use "kubectl pods nodes <command> --help" for more information about a command.

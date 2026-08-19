@@ -1,0 +1,12 @@
+this is a test description
+
+Usage:
+
+  this is a test usage
+
+Flags:
+
+  -p, --port int     specifies which port server should listen to. (default 80) [env: SERVER_PORT]
+      --name string  specifies the unique name of the worker. [env: WORKER_NAME]
+  -a                 runs on every namespace.
+  -h, --help         shows this help message.

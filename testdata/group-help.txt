@@ -1,0 +1,20 @@
+manages the pods.
+
+Usage:
+
+  kubectl pods [flags] <command> [command arguments]
+
+The command groups are:
+
+  nodes       manages the nodes of the pods.
+
+The commands are:
+
+  list        lists the pods.
+
+Flags:
+
+  -a, --all   targets the pods of every namespace.
+  -h, --help  shows this help message.
+
+Use "kubectl pods <command> --help" for more information about a command.
