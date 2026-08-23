@@ -707,6 +707,136 @@ func TestConsole(t *testing.T) {
 			group.RegisterGroup(NewGroup("list", "duplicated name."))
 		})
 	})
+
+	t.Run("scoped flags", func(t *testing.T) {
+		t.Run("a flag name defined at several levels keeps one value per level", func(t *testing.T) {
+			testCases := []struct {
+				name      string
+				arguments []string
+				root      contextLevel
+				group     contextLevel
+				command   contextLevel
+				effective string
+			}{
+				{
+					name:      "every level is provided",
+					arguments: []string{"kubectl", "--context=server-1", "get", "--context=eu-west", "pods", "--context=running"},
+					root:      contextLevel{"server-1", true},
+					group:     contextLevel{"eu-west", true},
+					command:   contextLevel{"running", true},
+					effective: "running",
+				},
+				{
+					name:      "only the console is provided",
+					arguments: []string{"kubectl", "--context=server-1", "get", "pods"},
+					root:      contextLevel{"server-1", true},
+					group:     contextLevel{"staging", false},
+					command:   contextLevel{"minikube", false},
+					effective: "server-1",
+				},
+				{
+					name:      "only the group is provided",
+					arguments: []string{"kubectl", "get", "--context=eu-west", "pods"},
+					root:      contextLevel{"default", false},
+					group:     contextLevel{"eu-west", true},
+					command:   contextLevel{"minikube", false},
+					effective: "eu-west",
+				},
+				{
+					name:      "only the command is provided",
+					arguments: []string{"kubectl", "get", "pods", "--context=running"},
+					root:      contextLevel{"default", false},
+					group:     contextLevel{"staging", false},
+					command:   contextLevel{"running", true},
+					effective: "running",
+				},
+				{
+					name:      "no level is provided",
+					arguments: []string{"kubectl", "get", "pods"},
+					root:      contextLevel{"default", false},
+					group:     contextLevel{"staging", false},
+					command:   contextLevel{"minikube", false},
+					effective: "default",
+				},
+			}
+
+			for _, testCase := range testCases {
+				t.Run(testCase.name, func(t *testing.T) {
+					var writer, errWriter bytes.Buffer
+					console, fixture := scopedFlags(&writer, &errWriter)
+
+					if exitStatus := console.Run(context.Background(), testCase.arguments); exitStatus != ExitSuccess {
+						t.Errorf("unexpected exit code, want %d got %d", ExitSuccess, exitStatus)
+					}
+
+					if !fixture.executed {
+						t.Fatal("the command was not executed")
+					}
+
+					levels := []struct {
+						name string
+						want contextLevel
+						got  *contextFixture
+					}{
+						{"console", testCase.root, fixture.root},
+						{"group", testCase.group, fixture.group},
+						{"command", testCase.command, fixture.command},
+					}
+
+					for _, level := range levels {
+						got := contextLevel{level.got.context, level.got.provided()}
+
+						if diff := cmp.Diff(level.want, got, cmp.AllowUnexported(contextLevel{})); diff != "" {
+							t.Errorf("unexpected %s level (-want +got):\n%s", level.name, diff)
+						}
+					}
+
+					if fixture.effective != testCase.effective {
+						t.Errorf("unexpected effective context, want %q got %q", testCase.effective, fixture.effective)
+					}
+
+					empty(t, "error", errWriter.String())
+				})
+			}
+		})
+
+		t.Run("every level is parsed by its own flag set", func(t *testing.T) {
+			var writer, errWriter bytes.Buffer
+			console, fixture := scopedFlags(&writer, &errWriter)
+
+			if exitStatus := console.Run(context.Background(), []string{"kubectl", "get", "pods"}); exitStatus != ExitSuccess {
+				t.Errorf("unexpected exit code, want %d got %d", ExitSuccess, exitStatus)
+			}
+
+			flagSets := []*FlagSet{fixture.root.flagSet, fixture.group.flagSet, fixture.command.flagSet}
+
+			for i, flagSet := range flagSets {
+				for _, other := range flagSets[i+1:] {
+					if flagSet == other {
+						t.Error("the levels should not share a flag set")
+					}
+
+					if flagSet.Lookup("context") == other.Lookup("context") {
+						t.Error("the levels should not share a flag")
+					}
+				}
+			}
+		})
+
+		t.Run("a level only defines the flags of its own scope", func(t *testing.T) {
+			var writer, errWriter bytes.Buffer
+			console, _ := scopedFlags(&writer, &errWriter)
+
+			// "--unknown" is defined by no level at all.
+			if exitStatus := console.Run(context.Background(), []string{"kubectl", "get", "--unknown", "pods"}); exitStatus != ExitUsageError {
+				t.Errorf("unexpected exit code, want %d got %d", ExitUsageError, exitStatus)
+			}
+
+			if !strings.Contains(errWriter.String(), "flag provided but not defined: --unknown") {
+				t.Errorf("unexpected error output: %s", errWriter.String())
+			}
+		})
+	})
 }
 
 // kubectlFixture holds the values the kubectl fixture's flags are parsed into.
@@ -756,6 +886,84 @@ func kubectl(writer, errWriter *bytes.Buffer) (*Console, *kubectlFixture) {
 
 	console.Register(version)
 	console.RegisterGroup(pods)
+
+	return console, fixture
+}
+
+// contextFixture holds one level's "--context" flag, together with the flag
+// set which defines it, so that a provided value can be told apart from a
+// default one.
+type contextFixture struct {
+	context string
+	flagSet *FlagSet
+}
+
+// bind defines the "--context" flag of the level. Every level binds its own
+// variable, as a flag writes its default value when it is defined and two
+// levels sharing one would overwrite each other.
+func (f *contextFixture) bind(flagSet *FlagSet, defaultContext string) {
+	f.flagSet = flagSet
+
+	flagSet.StringVar(&f.context, defaultContext, "the context to work against.", Long("context"))
+}
+
+// provided reports whether the flag was provided at this level.
+func (f *contextFixture) provided() bool {
+	return f.flagSet != nil && f.flagSet.Lookup("context").Provided()
+}
+
+// contextLevel is the expected state of one level's "--context" flag.
+type contextLevel struct {
+	context  string
+	provided bool
+}
+
+// scopedFlagsFixture holds the "--context" flag of every level of the scoped
+// flags fixture, and the context the command resolves out of them.
+type scopedFlagsFixture struct {
+	root    *contextFixture
+	group   *contextFixture
+	command *contextFixture
+
+	effective string
+	executed  bool
+}
+
+// scopedFlags builds a console where the console, the "get" group and the
+// "pods" command each define their own "--context" flag:
+//
+//	kubectl --context=server-1 get --context=eu-west pods --context=running
+func scopedFlags(writer, errWriter *bytes.Buffer) (*Console, *scopedFlagsFixture) {
+	fixture := &scopedFlagsFixture{
+		root:    &contextFixture{},
+		group:   &contextFixture{},
+		command: &contextFixture{},
+	}
+
+	pods := NewSpyCommand("pods", "gets the pods.", "kubectl get pods [flags]", 0, func(fs *FlagSet) {
+		fixture.command.bind(fs, "minikube")
+	})
+	pods.runFunc = func(fs *FlagSet) {
+		fixture.executed = true
+
+		// the deepest level which was provided wins, the console's value
+		// applies when none of the deeper ones was.
+		fixture.effective = fixture.root.context
+
+		for _, level := range []*contextFixture{fixture.group, fixture.command} {
+			if level.provided() {
+				fixture.effective = level.context
+			}
+		}
+	}
+
+	get := NewGroup("get", "gets resources.").
+		Flags(func(fs *FlagSet) { fixture.group.bind(fs, "staging") }).
+		Register(pods)
+
+	console := NewConsole("kubectl", "controls the cluster manager.", writer, errWriter, provider.Default)
+	console.Flags(func(fs *FlagSet) { fixture.root.bind(fs, "default") })
+	console.RegisterGroup(get)
 
 	return console, fixture
 }
