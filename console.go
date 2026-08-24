@@ -55,14 +55,10 @@ type Command interface {
 
 // Service is an optional interface that a Command can implement to provide
 // service providers whose lifecycle (register, boot and terminate) is managed
-// by the danceable service provider manager. Boot is called once all providers
-// have been booted, allowing the command to resolve its dependencies before Run.
+// by the danceable service provider manager around the command's run.
 type Service interface {
 	// Providers returns the service providers required by the command.
 	Providers() []provider.Provider
-
-	// Boot resolves the command's dependencies from the booted container.
-	Boot(ctx context.Context, container provider.Container) error
 }
 
 // Console represents a set of commands, which are optionally organized in
@@ -238,13 +234,6 @@ func (c *Console) runService(ctx context.Context, cmd Command, service Service) 
 		provider.WithTerminationDelay(terminationDelay),
 		provider.WithTerminationDeadline(terminationDeadline),
 		provider.WithCallback(func(callbackCtx context.Context, container provider.Container) {
-			if err := service.Boot(callbackCtx, container); err != nil {
-				fmt.Fprintln(c.errWriter, err)
-				exitStatus <- ExitFailure
-				cancel()
-				return
-			}
-
 			exitStatus <- cmd.Run(callbackCtx)
 			cancel()
 		}),

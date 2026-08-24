@@ -728,7 +728,7 @@ func TestConsole(t *testing.T) {
 			var writer, errWriter bytes.Buffer
 
 			serviceProvider := &SpyProvider{}
-			service := NewSpyService("serve", ExitSuccess, []provider.Provider{serviceProvider}, nil)
+			service := NewSpyService("serve", ExitSuccess, []provider.Provider{serviceProvider})
 
 			console := NewConsole("Test", "Test description", &writer, &errWriter, newManager())
 			console.Register(service)
@@ -737,16 +737,8 @@ func TestConsole(t *testing.T) {
 				t.Errorf("unexpected exit code, want %d got %d", ExitSuccess, exitStatus)
 			}
 
-			if service.BootCount != 1 {
-				t.Errorf("the command should have booted once, got %d", service.BootCount)
-			}
-
 			if service.RunCount != 1 {
 				t.Errorf("the command should have run once, got %d", service.RunCount)
-			}
-
-			if service.Container == nil {
-				t.Error("the command should have been booted with the container")
 			}
 
 			counts := [3]int{serviceProvider.RegisterCount, serviceProvider.BootCount, serviceProvider.TerminateCount}
@@ -760,7 +752,7 @@ func TestConsole(t *testing.T) {
 		t.Run("the exit status of the command is returned", func(t *testing.T) {
 			var writer, errWriter bytes.Buffer
 
-			service := NewSpyService("serve", ExitFailure, nil, nil)
+			service := NewSpyService("serve", ExitFailure, nil)
 
 			console := NewConsole("Test", "Test description", &writer, &errWriter, newManager())
 			console.Register(service)
@@ -772,43 +764,36 @@ func TestConsole(t *testing.T) {
 			empty(t, "error", errWriter.String())
 		})
 
-		t.Run("a command which fails to boot does not run", func(t *testing.T) {
+		t.Run("a command without providers is still run", func(t *testing.T) {
 			var writer, errWriter bytes.Buffer
 
-			bootErr := errors.New("the dependency cannot be resolved")
-			service := NewSpyService("serve", ExitSuccess, nil, bootErr)
+			service := NewSpyService("serve", ExitSuccess, nil)
 
 			console := NewConsole("Test", "Test description", &writer, &errWriter, newManager())
 			console.Register(service)
 
-			if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitFailure {
-				t.Errorf("unexpected exit code, want %d got %d", ExitFailure, exitStatus)
+			if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitSuccess {
+				t.Errorf("unexpected exit code, want %d got %d", ExitSuccess, exitStatus)
 			}
 
-			if service.RunCount != 0 {
-				t.Errorf("the command should not have run, got %d", service.RunCount)
+			if service.RunCount != 1 {
+				t.Errorf("the command should have run once, got %d", service.RunCount)
 			}
 
-			if !strings.Contains(errWriter.String(), bootErr.Error()) {
-				t.Errorf("unexpected error output: %s", errWriter.String())
-			}
+			empty(t, "error", errWriter.String())
 		})
 
 		t.Run("a provider which fails to register stops the command", func(t *testing.T) {
 			var writer, errWriter bytes.Buffer
 
 			registerErr := errors.New("the provider cannot be registered")
-			service := NewSpyService("serve", ExitSuccess, []provider.Provider{&SpyProvider{registerErr: registerErr}}, nil)
+			service := NewSpyService("serve", ExitSuccess, []provider.Provider{&SpyProvider{registerErr: registerErr}})
 
 			console := NewConsole("Test", "Test description", &writer, &errWriter, newManager())
 			console.Register(service)
 
 			if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitFailure {
 				t.Errorf("unexpected exit code, want %d got %d", ExitFailure, exitStatus)
-			}
-
-			if service.BootCount != 0 {
-				t.Errorf("the command should not have booted, got %d", service.BootCount)
 			}
 
 			if service.RunCount != 0 {
@@ -1153,31 +1138,19 @@ type SpyService struct {
 	*SpyCommand
 
 	providers []provider.Provider
-	bootErr   error
-
-	BootCount int
-	Container provider.Container
 }
 
 var _ Service = &SpyService{}
 
-func NewSpyService(name string, exitStatus int, providers []provider.Provider, bootErr error) *SpyService {
+func NewSpyService(name string, exitStatus int, providers []provider.Provider) *SpyService {
 	return &SpyService{
 		SpyCommand: NewSpyCommand(name, "a service command.", "test "+name, exitStatus, nil),
 		providers:  providers,
-		bootErr:    bootErr,
 	}
 }
 
 func (s *SpyService) Providers() []provider.Provider {
 	return s.providers
-}
-
-func (s *SpyService) Boot(ctx context.Context, container provider.Container) error {
-	s.BootCount++
-	s.Container = container
-
-	return s.bootErr
 }
 
 // SpyProvider is a service provider which counts the calls of its lifecycle.

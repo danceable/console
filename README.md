@@ -369,21 +369,17 @@ registered, booted and terminated around its run:
 ```go
 type Service interface {
     Providers() []provider.Provider
-    Boot(ctx context.Context, container provider.Container) error
 }
 ```
 
-`Boot` is called once every provider has been booted, which is where the command
-resolves its dependencies, and the providers are terminated gracefully once the
-command returns or the context is cancelled.
+Every provider is registered and booted before the command runs, and they are
+terminated gracefully once the command returns or the context is cancelled. A
+provider which fails to register or to boot stops the command, which exits with
+`ExitFailure`.
 
 ```go
 func (c *ServeCommand) Providers() []provider.Provider {
     return providers.BlogProviders()
-}
-
-func (c *ServeCommand) Boot(ctx context.Context, container provider.Container) error {
-    return container.Resolve(&c.handler)
 }
 ```
 
@@ -467,7 +463,7 @@ type Value interface {
 | Interface | Methods | Description |
 |-----------|---------|-------------|
 | Command | `Name()`, `Description()`, `Usage()`, `Configure(*FlagSet)`, `Run(ctx)` | A single command of the console. |
-| Service | `Providers()`, `Boot(ctx, container)` | Optional interface for a command whose service providers are managed around its run. |
+| Service | `Providers()` | Optional interface for a command whose service providers are managed around its run. |
 | Value | `String()`, `Set(string)` | The dynamic value stored in a flag. |
 
 #### Package Functions
