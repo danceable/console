@@ -3,13 +3,16 @@ package console
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/danceable/container"
 	"github.com/danceable/provider"
+	"github.com/danceable/provider/adapters/danceable"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -706,6 +709,116 @@ func TestConsole(t *testing.T) {
 			group.Register(NewSpyCommand("list", "", "", 0, nil))
 			group.RegisterGroup(NewGroup("list", "duplicated name."))
 		})
+
+		t.Run("registering a group name twice panics", func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Error("registering the same group twice should panic")
+				}
+			}()
+
+			group := NewGroup("pods", "manages the pods.")
+			group.RegisterGroup(NewGroup("nodes", "manages the nodes."))
+			group.RegisterGroup(NewGroup("nodes", "duplicated name."))
+		})
+	})
+
+	t.Run("service commands", func(t *testing.T) {
+		t.Run("the providers are managed around the run", func(t *testing.T) {
+			var writer, errWriter bytes.Buffer
+
+			serviceProvider := &SpyProvider{}
+			service := NewSpyService("serve", ExitSuccess, []provider.Provider{serviceProvider}, nil)
+
+			console := NewConsole("Test", "Test description", &writer, &errWriter, newManager())
+			console.Register(service)
+
+			if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitSuccess {
+				t.Errorf("unexpected exit code, want %d got %d", ExitSuccess, exitStatus)
+			}
+
+			if service.BootCount != 1 {
+				t.Errorf("the command should have booted once, got %d", service.BootCount)
+			}
+
+			if service.RunCount != 1 {
+				t.Errorf("the command should have run once, got %d", service.RunCount)
+			}
+
+			if service.Container == nil {
+				t.Error("the command should have been booted with the container")
+			}
+
+			counts := [3]int{serviceProvider.RegisterCount, serviceProvider.BootCount, serviceProvider.TerminateCount}
+			if counts != [3]int{1, 1, 1} {
+				t.Errorf("unexpected provider lifecycle, want [1 1 1] got %v", counts)
+			}
+
+			empty(t, "error", errWriter.String())
+		})
+
+		t.Run("the exit status of the command is returned", func(t *testing.T) {
+			var writer, errWriter bytes.Buffer
+
+			service := NewSpyService("serve", ExitFailure, nil, nil)
+
+			console := NewConsole("Test", "Test description", &writer, &errWriter, newManager())
+			console.Register(service)
+
+			if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitFailure {
+				t.Errorf("unexpected exit code, want %d got %d", ExitFailure, exitStatus)
+			}
+
+			empty(t, "error", errWriter.String())
+		})
+
+		t.Run("a command which fails to boot does not run", func(t *testing.T) {
+			var writer, errWriter bytes.Buffer
+
+			bootErr := errors.New("the dependency cannot be resolved")
+			service := NewSpyService("serve", ExitSuccess, nil, bootErr)
+
+			console := NewConsole("Test", "Test description", &writer, &errWriter, newManager())
+			console.Register(service)
+
+			if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitFailure {
+				t.Errorf("unexpected exit code, want %d got %d", ExitFailure, exitStatus)
+			}
+
+			if service.RunCount != 0 {
+				t.Errorf("the command should not have run, got %d", service.RunCount)
+			}
+
+			if !strings.Contains(errWriter.String(), bootErr.Error()) {
+				t.Errorf("unexpected error output: %s", errWriter.String())
+			}
+		})
+
+		t.Run("a provider which fails to register stops the command", func(t *testing.T) {
+			var writer, errWriter bytes.Buffer
+
+			registerErr := errors.New("the provider cannot be registered")
+			service := NewSpyService("serve", ExitSuccess, []provider.Provider{&SpyProvider{registerErr: registerErr}}, nil)
+
+			console := NewConsole("Test", "Test description", &writer, &errWriter, newManager())
+			console.Register(service)
+
+			if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitFailure {
+				t.Errorf("unexpected exit code, want %d got %d", ExitFailure, exitStatus)
+			}
+
+			if service.BootCount != 0 {
+				t.Errorf("the command should not have booted, got %d", service.BootCount)
+			}
+
+			if service.RunCount != 0 {
+				t.Errorf("the command should not have run, got %d", service.RunCount)
+			}
+
+			if !strings.Contains(errWriter.String(), registerErr.Error()) {
+				t.Errorf("unexpected error output: %s", errWriter.String())
+			}
+		})
 	})
 
 	t.Run("scoped flags", func(t *testing.T) {
@@ -1033,6 +1146,73 @@ func (c *SpyCommand) Run(ctx context.Context) ExitStatus {
 	}
 
 	return c.exitStatus
+}
+
+// SpyService is a command whose service providers are managed around its run.
+type SpyService struct {
+	*SpyCommand
+
+	providers []provider.Provider
+	bootErr   error
+
+	BootCount int
+	Container provider.Container
+}
+
+var _ Service = &SpyService{}
+
+func NewSpyService(name string, exitStatus int, providers []provider.Provider, bootErr error) *SpyService {
+	return &SpyService{
+		SpyCommand: NewSpyCommand(name, "a service command.", "test "+name, exitStatus, nil),
+		providers:  providers,
+		bootErr:    bootErr,
+	}
+}
+
+func (s *SpyService) Providers() []provider.Provider {
+	return s.providers
+}
+
+func (s *SpyService) Boot(ctx context.Context, container provider.Container) error {
+	s.BootCount++
+	s.Container = container
+
+	return s.bootErr
+}
+
+// SpyProvider is a service provider which counts the calls of its lifecycle.
+type SpyProvider struct {
+	registerErr error
+
+	RegisterCount  int
+	BootCount      int
+	TerminateCount int
+}
+
+var _ provider.Provider = &SpyProvider{}
+
+func (p *SpyProvider) Register(ctx context.Context, container provider.Container) error {
+	p.RegisterCount++
+
+	return p.registerErr
+}
+
+func (p *SpyProvider) Boot(ctx context.Context, container provider.Container) error {
+	p.BootCount++
+
+	return nil
+}
+
+func (p *SpyProvider) Terminate(ctx context.Context) error {
+	p.TerminateCount++
+
+	return nil
+}
+
+// newManager returns a manager of its own, so the providers a test registers
+// are not shared with the other ones.
+func newManager() *provider.Manager {
+	return provider.New(danceable.New(container.New()))
 }
 
 // empty fails when the given output of a writer is not empty.

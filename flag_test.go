@@ -3,6 +3,7 @@ package console
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -592,6 +593,14 @@ func TestFlagSet(t *testing.T) {
 				name:    "a short name longer than a character",
 				options: []FlagOption{Short("port")},
 			},
+			{
+				name:    "a short name which is a dash",
+				options: []FlagOption{Short("-")},
+			},
+			{
+				name:    "a short name which is an equal sign",
+				options: []FlagOption{Short("=")},
+			},
 		}
 
 		for _, testCase := range testCases {
@@ -608,7 +617,7 @@ func TestFlagSet(t *testing.T) {
 			})
 		}
 
-		t.Run("a name defined twice", func(t *testing.T) {
+		t.Run("a short name defined twice", func(t *testing.T) {
 			defer func() {
 				if recover() == nil {
 					t.Error("a flag defined twice should panic")
@@ -621,7 +630,192 @@ func TestFlagSet(t *testing.T) {
 			flagSet.IntVar(&port, 80, "the port to listen to.", Long("port"), Short("p"))
 			flagSet.IntVar(&otherPort, 8080, "another port.", Long("other-port"), Short("p"))
 		})
+
+		t.Run("a long name defined twice", func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Error("a flag defined twice should panic")
+				}
+			}()
+
+			var port, otherPort int
+
+			flagSet := NewFlagSet("test", nil)
+			flagSet.IntVar(&port, 80, "the port to listen to.", Long("port"), Short("p"))
+			flagSet.IntVar(&otherPort, 8080, "another port.", Long("port"), Short("o"))
+		})
 	})
+
+	t.Run("a value which the type cannot parse is reported", func(t *testing.T) {
+		testCases := []struct {
+			name    string
+			define  func(*FlagSet)
+			invalid string
+		}{
+			{
+				name:    "bool",
+				define:  func(fs *FlagSet) { var v bool; fs.BoolVar(&v, false, "", Long("flag"), Short("f")) },
+				invalid: "maybe",
+			},
+			{
+				name:    "int",
+				define:  func(fs *FlagSet) { var v int; fs.IntVar(&v, 0, "", Long("flag"), Short("f")) },
+				invalid: "abc",
+			},
+			{
+				name:    "int out of range",
+				define:  func(fs *FlagSet) { var v int; fs.IntVar(&v, 0, "", Long("flag"), Short("f")) },
+				invalid: "99999999999999999999",
+			},
+			{
+				name:    "int64",
+				define:  func(fs *FlagSet) { var v int64; fs.Int64Var(&v, 0, "", Long("flag"), Short("f")) },
+				invalid: "abc",
+			},
+			{
+				name:    "uint",
+				define:  func(fs *FlagSet) { var v uint; fs.UintVar(&v, 0, "", Long("flag"), Short("f")) },
+				invalid: "-1",
+			},
+			{
+				name:    "uint64",
+				define:  func(fs *FlagSet) { var v uint64; fs.Uint64Var(&v, 0, "", Long("flag"), Short("f")) },
+				invalid: "-1",
+			},
+			{
+				name:    "float64",
+				define:  func(fs *FlagSet) { var v float64; fs.Float64Var(&v, 0, "", Long("flag"), Short("f")) },
+				invalid: "abc",
+			},
+			{
+				name:    "duration",
+				define:  func(fs *FlagSet) { var v time.Duration; fs.DurationVar(&v, 0, "", Long("flag"), Short("f")) },
+				invalid: "abc",
+			},
+		}
+
+		for _, testCase := range testCases {
+			t.Run(testCase.name, func(t *testing.T) {
+				// the long and the short forms report the value separately.
+				for _, arguments := range [][]string{
+					{"--flag=" + testCase.invalid},
+					{"-f=" + testCase.invalid},
+				} {
+					var errWriter bytes.Buffer
+
+					flagSet := NewFlagSet("test", &errWriter)
+					testCase.define(flagSet)
+
+					if err := flagSet.Parse(arguments); err == nil {
+						t.Fatalf("%q should have been rejected", arguments)
+					}
+
+					if !strings.Contains(errWriter.String(), "invalid value") {
+						t.Errorf("unexpected error for %q: %s", arguments, errWriter.String())
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("a value of your own", func(t *testing.T) {
+		t.Run("names itself a value when it has no type", func(t *testing.T) {
+			var (
+				help  bytes.Buffer
+				value plainValue
+			)
+
+			flagSet := NewFlagSet("test", nil)
+			flagSet.Var(&value, "a value of your own.", Long("custom"))
+			flagSet.PrintDefaults(&help)
+
+			if !strings.Contains(help.String(), "--custom value") {
+				t.Errorf("the flag should be named by a value:\n%s", help.String())
+			}
+		})
+
+		t.Run("is reachable through the flag", func(t *testing.T) {
+			var value plainValue
+
+			flagSet := NewFlagSet("test", nil)
+			flag := flagSet.Var(&value, "a value of your own.", Long("custom"))
+
+			if flag.Value() != &value {
+				t.Error("the flag should hold the value it was defined with")
+			}
+
+			if err := flagSet.Parse([]string{"--custom=set"}); err != nil {
+				t.Fatalf("unexpected error: %s", err)
+			}
+
+			if flagSet.Lookup("custom").Value().String() != "set" {
+				t.Errorf("unexpected value, got %q", flagSet.Lookup("custom").Value().String())
+			}
+		})
+	})
+
+	t.Run("the types of the values", func(t *testing.T) {
+		var (
+			boolFlag     bool
+			stringFlag   string
+			intFlag      int
+			int64Flag    int64
+			uintFlag     uint
+			uint64Flag   uint64
+			float64Flag  float64
+			durationFlag time.Duration
+		)
+
+		testCases := []struct {
+			name  string
+			value Value
+			want  string
+		}{
+			{"bool", newBoolValue(false, &boolFlag), "bool"},
+			{"string", newStringValue("", &stringFlag), "string"},
+			{"int", newIntValue(0, &intFlag), "int"},
+			{"int64", newInt64Value(0, &int64Flag), "int"},
+			{"uint", newUintValue(0, &uintFlag), "uint"},
+			{"uint64", newUint64Value(0, &uint64Flag), "uint"},
+			{"float64", newFloat64Value(0, &float64Flag), "float"},
+			{"duration", newDurationValue(0, &durationFlag), "duration"},
+		}
+
+		for _, testCase := range testCases {
+			t.Run(testCase.name, func(t *testing.T) {
+				typed, names := testCase.value.(typer)
+				if !names {
+					t.Fatalf("%T should name its type", testCase.value)
+				}
+
+				if got := typed.Type(); got != testCase.want {
+					t.Errorf("unexpected type, want %q got %q", testCase.want, got)
+				}
+			})
+		}
+	})
+
+	t.Run("an error which is not a number error is kept as it is", func(t *testing.T) {
+		err := errors.New("not a strconv error")
+
+		if got := numError(err); !errors.Is(got, err) {
+			t.Errorf("unexpected error, want %v got %v", err, got)
+		}
+	})
+}
+
+// plainValue is a flag value which names no type of its own, so the help falls
+// back to calling it a value.
+type plainValue struct {
+	value string
+}
+
+func (p *plainValue) String() string { return p.value }
+
+func (p *plainValue) Set(value string) error {
+	p.value = value
+
+	return nil
 }
 
 // equalArgs compares two argument lists, treating a nil and an empty list as equal.

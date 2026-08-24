@@ -7,4 +7,4 @@ require (
 	github.com/google/go-cmp v0.7.0
 )
 
-require github.com/danceable/container v1.2.0 // indirect
+require github.com/danceable/container v1.2.0

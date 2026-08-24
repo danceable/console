@@ -153,6 +153,119 @@ Parsing stops right before the first non-flag argument (or `--`), and everything
 which follows is available through `flagSet.Args()`. That is what lets the
 arguments of a subgroup, of a command and of their own flags stay untouched.
 
+#### Flags from a struct
+
+A whole set of flags is defined at once from a tagged struct, which keeps the
+configuration of an application in a single place:
+
+```go
+type configs struct {
+    AppEnv  string `usage:"the deployment environment." env:"APP_ENV"`
+    NodeEnv string `usage:"a fallback for APP_ENV." env:"NODE_ENV"`
+
+    PostgresHost     string `usage:"the host." env:"POSTGRES_HOST" long:"postgres-host" short:"H" default:"localhost"`
+    PostgresPort     int    `usage:"the port." env:"POSTGRES_PORT" long:"postgres-port" short:"P" default:"5432"`
+    PostgresPassword string `usage:"the password." env:"POSTGRES_PASSWORD" long:"postgres-password" default:"-"`
+}
+
+configuration := &configs{}
+
+configure, err := console.StructFlags(configuration)
+if err != nil {
+    log.Fatal(err)
+}
+
+console.NewConsole("app", "controls the app.", os.Stdout, os.Stderr, provider.Default).Flags(configure)
+```
+
+`StructFlags` validates the struct and returns the configure function of a
+console, of a group or of a command, so a mistake in the tags surfaces when the
+console is built rather than when it reaches the level the flags belong to.
+`flagSet.Struct(&configuration)` binds a struct onto a flag set directly.
+
+Every tag is optional and their order is irrelevant. A field which carries none
+of them is not a flag and is left alone, while a field which carries any of them
+has to be reachable, which means naming at least one of `long`, `short` and
+`env`:
+
+| Tag | Description |
+|-----|-------------|
+| `usage:"..."` | The usage message of the flag. |
+| `long:"name"` | The long name, provided as `--name`. |
+| `short:"n"` | The short (single character) name, provided as `-n`. |
+| `env:"NAME"` | The environment variable the flag falls back to. |
+| `default:"..."` | The default value of the flag. |
+
+The supported field types are `string`, `bool`, `int`, `int64`, `uint`, `uint64`,
+`float64` and `time.Duration`, along with any type whose pointer implements
+`Value`.
+
+##### Default values
+
+The default value of a flag is the value its field already holds, even when it is
+the zero value of its type, so a struct is given its defaults by being populated
+before it is bound:
+
+```go
+configuration := &configs{PostgresHost: "localhost", PostgresPort: 5432}
+```
+
+A `default` tag overrides that value, and `default:"-"` drops it: the field is
+reset to the zero value of its type whatever the struct holds, and the help shows
+no default for it. A `default` tag goes through the flag's own parser, so it is
+reported as an error when the type of the field cannot read it.
+
+##### Nested and embedded structs
+
+Nested and embedded structs are flattened into the same flag set, which lets the
+settings of a subsystem live in a struct of their own. No name is derived from
+the field a struct is nested in: a nested field names its flag the way a field of
+the outer struct does. A nil pointer to a struct is allocated to hold its flags.
+
+```go
+type postgres struct {
+    Host string `usage:"the host." long:"postgres-host" env:"POSTGRES_HOST"`
+    Port int    `usage:"the port." long:"postgres-port" default:"5432"`
+}
+
+type configs struct {
+    common                     // embedded, flattened in as well.
+    Verbose  bool     `usage:"verbose output." long:"verbose" short:"v"`
+    Postgres postgres // nested, its own fields become flags.
+    Redis    *redis   // allocated when it is nil.
+}
+```
+
+A struct which is nested is never a flag itself, so it carries no flag tag of its
+own. A type which parses itself, by implementing `Value`, is a flag rather than a
+struct to recurse into.
+
+##### Errors
+
+Binding is all or nothing: the struct is resolved and validated before the first
+flag is defined, so a rejected struct leaves both the flag set and the values of
+the struct untouched. The error is a `*FieldError`, which names the offending
+field and wraps the reason:
+
+| Error | Returned for |
+|-------|--------------|
+| `ErrNotStruct` | A target which is not a non nil pointer to a struct. |
+| `ErrNoName` | A tagged field which names none of `long`, `short` and `env`. |
+| `ErrInvalidName` | A short name longer than a character, or a long name the parser could never match. |
+| `ErrDuplicateName` | A name two fields claim, or a name the flag set already holds. |
+| `ErrInvalidDefault` | A `default` tag the type of the field cannot be parsed from. |
+| `ErrUnsupportedType` | A tagged field of a type no flag can be defined for. |
+| `ErrUnexportedField` | A tagged field which cannot be addressed. |
+| `ErrNestedTags` | A nested or an embedded struct carrying flag tags of its own. |
+| `ErrRecursiveType` | A struct which nests itself. |
+
+```go
+var fieldError *console.FieldError
+if errors.As(err, &fieldError) {
+    log.Fatalf("the field %s cannot be a flag: %s", fieldError.Field, fieldError.Err)
+}
+```
+
 #### Groups and subgroups
 
 Commands are optionally organized in groups and subgroups. A group is not
@@ -332,6 +445,7 @@ user input errors.
 | Float64Var | `Float64Var(p *float64, value float64, usage string, options ...FlagOption) *Flag` | Defines a floating point flag. |
 | DurationVar | `DurationVar(p *time.Duration, value time.Duration, usage string, options ...FlagOption) *Flag` | Defines a `time.Duration` flag. |
 | Var | `Var(value Value, usage string, options ...FlagOption) *Flag` | Defines a flag with a value of your own. |
+| Struct | `Struct(target any) error` | Defines one flag per tagged field of a struct. |
 | Parse | `Parse(arguments []string) error` | Parses the flags, then loads the missing ones from the environment. |
 | Args, Arg, NArg | `Args() []string` | The arguments which follow the flags. |
 | Lookup | `Lookup(name string) *Flag` | The flag defined with the given long, short or environment variable name. |
@@ -355,6 +469,15 @@ type Value interface {
 | Command | `Name()`, `Description()`, `Usage()`, `Configure(*FlagSet)`, `Run(ctx)` | A single command of the console. |
 | Service | `Providers()`, `Boot(ctx, container)` | Optional interface for a command whose service providers are managed around its run. |
 | Value | `String()`, `Set(string)` | The dynamic value stored in a flag. |
+
+#### Package Functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| NewConsole | `NewConsole(name, description string, writer, errWriter io.Writer, manager *provider.Manager) *Console` | A new console. |
+| NewGroup | `NewGroup(name, description string) *Group` | A new group of commands. |
+| NewFlagSet | `NewFlagSet(name string, errWriter io.Writer) *FlagSet` | A new set of flags. |
+| StructFlags | `StructFlags(target any) (func(*FlagSet), error)` | The configure function of a tagged struct, validated up front. |
 
 ## License
 
