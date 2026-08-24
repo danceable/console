@@ -3,6 +3,7 @@ package console
 import (
 	"bytes"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -570,6 +571,63 @@ func TestFlagSet(t *testing.T) {
 		flagSet.PrintDefaults(&b)
 
 		golden(t, "flag-defaults.txt", b.String())
+	})
+
+	t.Run("the flags are printed in alphabetical order", func(t *testing.T) {
+		var (
+			zone    string
+			all     bool
+			ratio   float64
+			secret  string
+			verbose bool
+		)
+
+		flagSet := NewFlagSet("test", nil)
+		flagSet.StringVar(&zone, "", "the zone to target.", Long("zone"))
+		flagSet.BoolVar(&all, false, "targets every namespace.", Long("all"), Short("a"))
+		flagSet.Float64Var(&ratio, 0, "the sampling ratio.", Short("r"))
+		flagSet.StringVar(&secret, "", "the signing secret.", Env("CONSOLE_TEST_SECRET"))
+		flagSet.BoolVar(&verbose, false, "logs every step.", Long("verbose"), Short("v"))
+
+		var b bytes.Buffer
+		flagSet.PrintDefaults(&b)
+
+		// an env-only flag sorts by its environment variable name, and the help
+		// flag always closes the list.
+		want := []string{"-a, --all", "CONSOLE_TEST_SECRET", "-r float", "-v, --verbose", "--zone string", "-h, --help"}
+
+		got := b.String()
+		previous := 0
+
+		for _, name := range want {
+			at := strings.Index(got, name)
+
+			switch {
+			case at < 0:
+				t.Fatalf("%q is missing from the help:\n%s", name, got)
+			case at < previous:
+				t.Errorf("%q is out of order, the flags should be sorted:\n%s", name, got)
+			}
+
+			previous = at
+		}
+	})
+
+	t.Run("printing the flags leaves the definition order untouched", func(t *testing.T) {
+		var (
+			zone string
+			all  bool
+		)
+
+		flagSet := NewFlagSet("test", nil)
+		zoneFlag := flagSet.StringVar(&zone, "", "the zone to target.", Long("zone"))
+		allFlag := flagSet.BoolVar(&all, false, "targets every namespace.", Long("all"))
+
+		flagSet.PrintDefaults(io.Discard)
+
+		if flags := flagSet.Flags(); flags[0] != zoneFlag || flags[1] != allFlag {
+			t.Error("the flags should stay in definition order")
+		}
 	})
 
 	t.Run("invalid definitions panic", func(t *testing.T) {

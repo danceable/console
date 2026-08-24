@@ -1,10 +1,12 @@
 package console
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -438,12 +440,18 @@ func (f *FlagSet) fail(err error) error {
 	return err
 }
 
-// PrintDefaults prints the defined flags to the given writer.
+// PrintDefaults prints the defined flags to the given writer, in alphabetical
+// order of the name they are presented by.
 func (f *FlagSet) PrintDefaults(w io.Writer) {
-	names := make([]string, 0, len(f.flags))
-	width := 0
+	// the help flag is always available, and it closes the list.
+	const help = "  -h, --help"
 
-	for _, flag := range f.flags {
+	flags := sortedFlags(f.flags)
+
+	names := make([]string, 0, len(flags))
+	width := len(help)
+
+	for _, flag := range flags {
 		name := flagName(flag)
 		names = append(names, name)
 
@@ -452,17 +460,43 @@ func (f *FlagSet) PrintDefaults(w io.Writer) {
 		}
 	}
 
-	// the help flag is always available.
-	names = append(names, "  -h, --help")
-	if len("  -h, --help") > width {
-		width = len("  -h, --help")
-	}
-
-	for i, flag := range f.flags {
+	for i, flag := range flags {
 		fmt.Fprintf(w, "%-*s  %s\n", width, names[i], flagUsage(flag))
 	}
 
-	fmt.Fprintf(w, "%-*s  %s\n", width, names[len(names)-1], "shows this help message.")
+	fmt.Fprintf(w, "%-*s  %s\n", width, help, "shows this help message.")
+}
+
+// sortedFlags returns the given flags in alphabetical order, leaving the
+// definition order of the flag set untouched.
+func sortedFlags(flags []*Flag) []*Flag {
+	sorted := slices.Clone(flags)
+
+	slices.SortFunc(sorted, func(a, b *Flag) int {
+		nameA, nameB := sortName(a), sortName(b)
+
+		// the case only breaks the ties, so that an env-only flag doesn't sort
+		// away from the others just because its name is upper case.
+		return cmp.Or(
+			strings.Compare(strings.ToLower(nameA), strings.ToLower(nameB)),
+			strings.Compare(nameA, nameB),
+		)
+	})
+
+	return sorted
+}
+
+// sortName returns the name a flag is sorted by, which is the one it leads with
+// in the help output.
+func sortName(flag *Flag) string {
+	switch {
+	case flag.long != "":
+		return flag.long
+	case flag.short != "":
+		return flag.short
+	default:
+		return flag.env
+	}
 }
 
 // flagName builds the left (name) column of a flag in the help output.

@@ -311,7 +311,9 @@ and `--username` is one after it.
 #### Help
 
 Every group, subgroup and command answers `--help` (or `-h`) with a help of its
-own, listing its subgroups, its commands and its flags:
+own, listing its subgroups, its commands and its flags. Subgroups, commands and
+flags are all listed in alphabetical order, whatever the order they were
+defined in:
 
 ```
 $ kubectl pods --help
@@ -446,7 +448,7 @@ user input errors.
 | Args, Arg, NArg | `Args() []string` | The arguments which follow the flags. |
 | Lookup | `Lookup(name string) *Flag` | The flag defined with the given long, short or environment variable name. |
 | Flags | `Flags() []*Flag` | The defined flags, in definition order. |
-| PrintDefaults | `PrintDefaults(w io.Writer)` | Writes the flags as they appear in a help. |
+| PrintDefaults | `PrintDefaults(w io.Writer)` | Writes the flags as they appear in a help, in alphabetical order. |
 
 A flag of your own implements `Value`, and may implement `IsBoolFlag() bool` to
 take no value and `Type() string` to name its type in the help:
