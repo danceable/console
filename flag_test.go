@@ -3,6 +3,7 @@ package console
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -339,17 +340,17 @@ func TestFlagSet(t *testing.T) {
 			{
 				name:      "an invalid value",
 				arguments: []string{"--port", "http"},
-				want:      "invalid value \"http\" for flag --port: parse error\n",
+				want:      "invalid value \"http\" for flag --port: can't be parsed as an integer\n",
 			},
 			{
 				name:      "an out of range value",
 				arguments: []string{"--port", "99999999999999999999"},
-				want:      "invalid value \"99999999999999999999\" for flag --port: value out of range\n",
+				want:      "invalid value \"99999999999999999999\" for flag --port: out of range for an integer\n",
 			},
 			{
 				name: "an invalid value of an environment variable",
 				env:  map[string]string{"CONSOLE_TEST_PORT": "http"},
-				want: "invalid value \"http\" for environment variable CONSOLE_TEST_PORT: parse error\n",
+				want: "invalid value \"http\" for environment variable CONSOLE_TEST_PORT: can't be parsed as an integer\n",
 			},
 		}
 
@@ -709,67 +710,79 @@ func TestFlagSet(t *testing.T) {
 			name    string
 			define  func(*FlagSet)
 			invalid string
+			want    string // the reason the value is rejected with.
 		}{
 			{
 				name:    "bool",
 				define:  func(fs *FlagSet) { var v bool; fs.BoolVar(&v, false, "", Long("flag"), Short("f")) },
 				invalid: "maybe",
+				want:    "can't be parsed as a boolean (true or false)",
 			},
 			{
 				name:    "int",
 				define:  func(fs *FlagSet) { var v int; fs.IntVar(&v, 0, "", Long("flag"), Short("f")) },
 				invalid: "abc",
+				want:    "can't be parsed as an integer",
 			},
 			{
 				name:    "int out of range",
 				define:  func(fs *FlagSet) { var v int; fs.IntVar(&v, 0, "", Long("flag"), Short("f")) },
 				invalid: "99999999999999999999",
+				want:    "out of range for an integer",
 			},
 			{
 				name:    "int64",
 				define:  func(fs *FlagSet) { var v int64; fs.Int64Var(&v, 0, "", Long("flag"), Short("f")) },
 				invalid: "abc",
+				want:    "can't be parsed as an integer",
 			},
 			{
 				name:    "uint",
 				define:  func(fs *FlagSet) { var v uint; fs.UintVar(&v, 0, "", Long("flag"), Short("f")) },
 				invalid: "-1",
+				want:    "can't be parsed as an unsigned integer (0 or greater)",
 			},
 			{
 				name:    "uint64",
 				define:  func(fs *FlagSet) { var v uint64; fs.Uint64Var(&v, 0, "", Long("flag"), Short("f")) },
 				invalid: "-1",
+				want:    "can't be parsed as an unsigned integer (0 or greater)",
 			},
 			{
 				name:    "float64",
 				define:  func(fs *FlagSet) { var v float64; fs.Float64Var(&v, 0, "", Long("flag"), Short("f")) },
 				invalid: "abc",
+				want:    "can't be parsed as a floating point number",
 			},
 			{
 				name:    "duration",
 				define:  func(fs *FlagSet) { var v time.Duration; fs.DurationVar(&v, 0, "", Long("flag"), Short("f")) },
 				invalid: "abc",
+				want:    `can't be parsed as a duration (such as "300ms", "1.5h" or "2h45m")`,
 			},
 		}
 
 		for _, testCase := range testCases {
 			t.Run(testCase.name, func(t *testing.T) {
-				// the long and the short forms report the value separately.
-				for _, arguments := range [][]string{
-					{"--flag=" + testCase.invalid},
-					{"-f=" + testCase.invalid},
+				// the long and the short forms report the value separately,
+				// and the reason names the type the value was expected to be.
+				for name, argument := range map[string]string{
+					"--flag": "--flag=" + testCase.invalid,
+					"-f":     "-f=" + testCase.invalid,
 				} {
 					var errWriter bytes.Buffer
 
 					flagSet := NewFlagSet("test", &errWriter)
 					testCase.define(flagSet)
 
-					if err := flagSet.Parse(arguments); err == nil {
-						t.Fatalf("%q should have been rejected", arguments)
+					if err := flagSet.Parse([]string{argument}); err == nil {
+						t.Fatalf("%q should have been rejected", argument)
 					}
 
-					if !strings.Contains(errWriter.String(), "invalid value") {
-						t.Errorf("unexpected error for %q: %s", arguments, errWriter.String())
+					want := fmt.Sprintf("invalid value %q for flag %s: %s\n", testCase.invalid, name, testCase.want)
+
+					if got := errWriter.String(); got != want {
+						t.Errorf("unexpected error for %q, want %q got %q", argument, want, got)
 					}
 				}
 			})
@@ -853,10 +866,20 @@ func TestFlagSet(t *testing.T) {
 		}
 	})
 
+	t.Run("the reason a value is rejected stays matchable", func(t *testing.T) {
+		if err := cantParse("an integer"); !errors.Is(err, errParse) {
+			t.Errorf("%v should be a parse error", err)
+		}
+
+		if err := outOfRange("an integer"); !errors.Is(err, errRange) {
+			t.Errorf("%v should be a range error", err)
+		}
+	})
+
 	t.Run("an error which is not a number error is kept as it is", func(t *testing.T) {
 		err := errors.New("not a strconv error")
 
-		if got := numError(err); !errors.Is(got, err) {
+		if got := numError(err, "an integer"); !errors.Is(got, err) {
 			t.Errorf("unexpected error, want %v got %v", err, got)
 		}
 	})
