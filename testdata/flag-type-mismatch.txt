@@ -1,4 +1,4 @@
-invalid value "100.2" for flag --intArg: parse error
+invalid value "100.2" for flag --intArg: can't be parsed as an integer
 this is a test description
 
 Usage:

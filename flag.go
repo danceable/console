@@ -601,7 +601,7 @@ func newBoolValue(value bool, p *bool) *boolValue {
 func (b *boolValue) Set(value string) error {
 	v, err := strconv.ParseBool(value)
 	if err != nil {
-		return errParse
+		return cantParse("a boolean (true or false)")
 	}
 
 	*b = boolValue(v)
@@ -624,7 +624,7 @@ func newIntValue(value int, p *int) *intValue {
 func (i *intValue) Set(value string) error {
 	v, err := strconv.ParseInt(value, 0, strconv.IntSize)
 	if err != nil {
-		return numError(err)
+		return numError(err, "an integer")
 	}
 
 	*i = intValue(v)
@@ -646,7 +646,7 @@ func newInt64Value(value int64, p *int64) *int64Value {
 func (i *int64Value) Set(value string) error {
 	v, err := strconv.ParseInt(value, 0, 64)
 	if err != nil {
-		return numError(err)
+		return numError(err, "an integer")
 	}
 
 	*i = int64Value(v)
@@ -668,7 +668,7 @@ func newUintValue(value uint, p *uint) *uintValue {
 func (u *uintValue) Set(value string) error {
 	v, err := strconv.ParseUint(value, 0, strconv.IntSize)
 	if err != nil {
-		return numError(err)
+		return numError(err, "an unsigned integer (0 or greater)")
 	}
 
 	*u = uintValue(v)
@@ -690,7 +690,7 @@ func newUint64Value(value uint64, p *uint64) *uint64Value {
 func (u *uint64Value) Set(value string) error {
 	v, err := strconv.ParseUint(value, 0, 64)
 	if err != nil {
-		return numError(err)
+		return numError(err, "an unsigned integer (0 or greater)")
 	}
 
 	*u = uint64Value(v)
@@ -712,7 +712,7 @@ func newFloat64Value(value float64, p *float64) *float64Value {
 func (f *float64Value) Set(value string) error {
 	v, err := strconv.ParseFloat(value, 64)
 	if err != nil {
-		return numError(err)
+		return numError(err, "a floating point number")
 	}
 
 	*f = float64Value(v)
@@ -734,7 +734,7 @@ func newDurationValue(value time.Duration, p *time.Duration) *durationValue {
 func (d *durationValue) Set(value string) error {
 	v, err := time.ParseDuration(value)
 	if err != nil {
-		return errParse
+		return cantParse(`a duration (such as "300ms", "1.5h" or "2h45m")`)
 	}
 
 	*d = durationValue(v)
@@ -745,21 +745,48 @@ func (d *durationValue) Set(value string) error {
 func (d *durationValue) String() string { return time.Duration(*d).String() }
 func (d *durationValue) Type() string   { return "duration" }
 
+// The reasons a value rejects what it was given. They are never printed as
+// they are, a parseError explains them with the type the value expects.
 var (
 	errParse = errors.New("parse error")
 	errRange = errors.New("value out of range")
 )
 
-// numError unwraps the verbose errors of the strconv package.
-func numError(err error) error {
+// parseError explains why a value was rejected, naming the type the value was
+// expected to be. It wraps errParse or errRange, so the reason stays matchable
+// while the message reads as a sentence once the flag set has prefixed it with
+// the value and the flag it belongs to:
+//
+//	invalid value "disabled" for environment variable POSTGRES_SSL_MODE: can't be parsed as a boolean (true or false)
+type parseError struct {
+	reason  error // errParse or errRange.
+	message string
+}
+
+func (e *parseError) Error() string { return e.message }
+func (e *parseError) Unwrap() error { return e.reason }
+
+// cantParse reports a value which doesn't fit the type of its flag at all.
+func cantParse(expected string) error {
+	return &parseError{reason: errParse, message: "can't be parsed as " + expected}
+}
+
+// outOfRange reports a value which fits the type of its flag but overflows it.
+func outOfRange(expected string) error {
+	return &parseError{reason: errRange, message: "out of range for " + expected}
+}
+
+// numError unwraps the verbose errors of the strconv package, naming the type
+// the value was expected to be.
+func numError(err error, expected string) error {
 	var numError *strconv.NumError
 	if !errors.As(err, &numError) {
 		return err
 	}
 
 	if errors.Is(numError.Err, strconv.ErrRange) {
-		return errRange
+		return outOfRange(expected)
 	}
 
-	return errParse
+	return cantParse(expected)
 }
