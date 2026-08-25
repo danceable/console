@@ -6,10 +6,10 @@
 // A command implements the [Command] interface. It defines its flags in
 // Configure and does its work in Run:
 //
-//	console := console.NewConsole(path.Base(os.Args[0]), "the application.", os.Stdout, os.Stderr, provider.Default)
-//	console.Register(blog.NewServeCommand())
+//	app := console.NewConsole(path.Base(os.Args[0]), "the application.", os.Stdout, os.Stderr, provider.Default)
+//	app.Register(blog.NewServeCommand())
 //
-//	os.Exit(console.Run(ctx, os.Args))
+//	os.Exit(app.Run(ctx, os.Args))
 //
 // A requested help is written to the first writer, while a usage error (and the
 // help which follows it) is written to the second one.
@@ -26,8 +26,13 @@
 // environment:
 //
 //	func (c *ServeCommand) Configure(flagSet *console.FlagSet) {
-//		flagSet.IntVar(&c.port, 80, "the port to listen to.", console.Long("port"), console.Short("p"), console.Env("SERVER_PORT"))
+//		console.Var(flagSet, &c.port, console.Long("port"), "the port to listen to.", console.Short("p"), console.Env("SERVER_PORT"), console.Default(80))
 //	}
+//
+// A flag is defined by the name it leads with, which is a parameter of [Var]
+// rather than an option: a flag which names none of the three could never be
+// provided. The other names it answers to are options, along with the value it
+// defaults to, which is otherwise the value its variable already holds.
 //
 // Such a flag is provided as "--port 80", "--port=80", "-p 80", "-p=80" or
 // "-p80". When it is not provided at all, its value is loaded from the
@@ -39,6 +44,31 @@
 // after the first non-flag argument or after "--" is left untouched and is
 // available through [FlagSet.Args].
 //
+// # Flag types
+//
+// A flag takes the type of the variable it is bound to, and that type is what
+// says how its values are parsed, formatted and presented. The Go types are
+// registered by the package itself: the strings, the booleans, the signed and
+// unsigned integers, the floating point numbers and [time.Duration].
+//
+// A type of your own is registered with [Register], which is all it takes for
+// it to be usable as a flag and as a struct field:
+//
+//	console.Register(console.Type[net.IP]{
+//		Name:    "ip",
+//		Expects: "an IP address",
+//		Parse: func(argument string) (net.IP, error) {
+//			if ip := net.ParseIP(argument); ip != nil {
+//				return ip, nil
+//			}
+//
+//			return nil, errors.New("invalid address")
+//		},
+//	})
+//
+// A type which parses itself, by implementing [Value], is defined as a flag
+// with [FlagSet.Var] instead.
+//
 // # Groups
 //
 // Commands are optionally organized in groups and subgroups, each one having
@@ -46,13 +76,13 @@
 //
 //	pods := console.NewGroup("pods", "manages the pods.").
 //		Flags(func(flagSet *console.FlagSet) {
-//			flagSet.BoolVar(&all, false, "targets every namespace.", console.Long("all"), console.Short("a"))
+//			console.Var(flagSet, &all, console.Long("all"), "targets every namespace.", console.Short("a"))
 //		}).
 //		Register(pod.NewListCommand()).
 //		RegisterGroup(nodes)
 //
 //	console.Flags(func(flagSet *console.FlagSet) {
-//		flagSet.StringVar(&username, "", "the user to authenticate as.", console.Long("username"), console.Short("u"))
+//		console.Var(flagSet, &username, console.Long("username"), "the user to authenticate as.", console.Short("u"))
 //	})
 //	console.RegisterGroup(pods)
 //

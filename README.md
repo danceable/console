@@ -96,13 +96,14 @@ func (c *ServeCommand) Description() string { return "serves a http server." }
 func (c *ServeCommand) Usage() string       { return "serve [flags]" }
 
 func (c *ServeCommand) Configure(flagSet *console.FlagSet) {
-    flagSet.IntVar(
+    console.Var(
+        flagSet,
         &c.port,
-        80,
-        "specifies which port server should listen to.",
         console.Long("port"),
+        "specifies which port server should listen to.",
         console.Short("p"),
         console.Env("SERVER_PORT"),
+        console.Default(80),
     )
 }
 
@@ -126,14 +127,19 @@ never looks at the environment.
 ```go
 // provided as "--port 80", "--port=80", "-p 80", "-p=80" or "-p80",
 // and loaded from SERVER_PORT when it is not provided at all.
-flagSet.IntVar(&port, 80, "the port to listen to.", console.Long("port"), console.Short("p"), console.Env("SERVER_PORT"))
+console.Var(flagSet, &port, console.Long("port"), "the port to listen to.", console.Short("p"), console.Env("SERVER_PORT"), console.Default(80))
 
 // long name only: "--username=admin".
-flagSet.StringVar(&username, "", "the user to authenticate as.", console.Long("username"))
+console.Var(flagSet, &username, console.Long("username"), "the user to authenticate as.")
 
 // environment variable only: it can't be provided on the command line at all.
-flagSet.StringVar(&secret, "", "the signing secret.", console.Env("SIGNING_SECRET"))
+console.Var(flagSet, &secret, console.Env("SIGNING_SECRET"), "the signing secret.")
 ```
+
+A flag is defined by the name it leads with, which is why it is a parameter of
+`Var` rather than an option: a flag which names none of the three could never be
+provided. The other names it answers to are options, along with the value it
+defaults to.
 
 The command line always wins over the environment. An environment variable which
 is empty or undefined is ignored, so the flag keeps its default value.
@@ -152,6 +158,81 @@ is empty or undefined is ignored, so the flag keeps its default value.
 Parsing stops right before the first non-flag argument (or `--`), and everything
 which follows is available through `flagSet.Args()`. That is what lets the
 arguments of a subgroup, of a command and of their own flags stay untouched.
+
+#### Flag types
+
+`console.Var` takes the type of the variable it binds a flag to, so there is one
+way to define a flag whatever it holds:
+
+```go
+console.Var(flagSet, &port, console.Long("port"), "the port to listen to.", console.Default(80))
+console.Var(flagSet, &timeout, console.Long("timeout"), "the request timeout.", console.Default(10*time.Second))
+```
+
+Each type is registered once with the parser which reads it, and every flag and
+every struct field of that type is then parsed by it. The Go types are
+registered by the package itself:
+
+| Type | Shown as | Reads |
+|------|----------|-------|
+| `string` | `string` | the argument as it is |
+| `bool` | *(nothing, it takes no value)* | `true`, `false`, `1`, `0`, `t`, `f` |
+| `int`, `int8`, `int16`, `int32`, `int64` | `int` | `42`, `-42`, `0x2a`, `0b101010`, `0o52` |
+| `uint`, `uint8`, `uint16`, `uint32`, `uint64` | `uint` | the same, without a sign |
+| `float32`, `float64` | `float` | `1.5`, `-1.5`, `1e3` |
+| `time.Duration` | `duration` | `300ms`, `1.5h`, `2h45m` |
+
+A type of your own is registered the same way, which is all it takes for it to
+be usable as a flag and as a struct field:
+
+```go
+console.Register(console.Type[net.IP]{
+    Name:    "ip",
+    Expects: "an IP address",
+    Parse: func(argument string) (net.IP, error) {
+        if ip := net.ParseIP(argument); ip != nil {
+            return ip, nil
+        }
+
+        return nil, errors.New("invalid address")
+    },
+})
+
+var bind net.IP
+console.Var(flagSet, &bind, console.Long("bind"), "the address to bind to.", console.Default(net.IPv4zero))
+```
+
+| Field | Description |
+|-------|-------------|
+| `Parse` | The parser of the type, which is the only field it has to define. The parsing functions of the standard library (`strconv.ParseBool`, `time.ParseDuration`, `net.ParseMAC`) are already of that shape. |
+| `Name` | The name of the type in the help, as the `int` of `--port int`. A type which names itself with nothing is shown as a `value`. |
+| `Expects` | What the type accepts, as `an integer`. Every value the parser rejects is explained with it (`can't be parsed as an integer`), except the ones it rejects as out of range. A type which leaves it empty reports the error of its parser as it is. |
+| `Format` | The string form of a value, which the help shows the default as. Defaults to the one the `fmt` package gives it. |
+| `Implicit` | The value the flag takes when it is provided without one, the way a boolean is provided as `--verbose`. Such a flag never consumes the argument which follows it. A type which leaves it empty requires a value. |
+
+Registering a type twice replaces the first registration, which is how a Go type
+is given parsing rules of your own. A type is normally registered from an `init`
+function: a flag is bound to its type when it is defined, so a flag which is
+already defined keeps the parsing it was defined with.
+
+A flag defaults to the value its variable already holds, which `console.Default`
+overrides:
+
+```go
+port := 80
+console.Var(flagSet, &port, console.Long("port"), "the port to listen to.")
+console.Var(flagSet, &retries, console.Long("retries"), "the number of retries.", console.Default(3))
+```
+
+A default value reaches its flag the way an untyped constant reaches a variable
+it is assigned to, so `console.Default(0)` is the zero of whatever number the
+flag holds. One the flag could never hold, because it is of another class of
+types or because it would overflow or be truncated to reach it, panics when the
+flag is defined.
+
+A flag whose default value is the zero value of its type is not presented with a
+default in the help, and a value the parser rejects leaves the variable
+untouched, so a flag provided with an invalid value keeps its default.
 
 #### Flags from a struct
 
@@ -196,9 +277,9 @@ has to be reachable, which means naming at least one of `long`, `short` and
 | `env:"NAME"` | The environment variable the flag falls back to. |
 | `default:"..."` | The default value of the flag. |
 
-The supported field types are `string`, `bool`, `int`, `int64`, `uint`, `uint64`,
-`float64` and `time.Duration`, along with any type whose pointer implements
-`Value`.
+A field is of any [registered type](#flag-types), which the Go types are out of
+the box, or of a type whose pointer implements `Value` and carries its own
+parsing.
 
 ##### Default values
 
@@ -278,13 +359,13 @@ nodes := console.NewGroup("nodes", "manages the nodes of the pods.").
 
 pods := console.NewGroup("pods", "manages the pods.").
     Flags(func(flagSet *console.FlagSet) {
-        flagSet.BoolVar(&all, false, "targets every namespace.", console.Long("all"), console.Short("a"))
+        console.Var(flagSet, &all, console.Long("all"), "targets every namespace.", console.Short("a"))
     }).
     Register(pod.NewListCommand()).
     RegisterGroup(nodes)
 
 c.Flags(func(flagSet *console.FlagSet) {
-    flagSet.StringVar(&username, "", "the user to authenticate as.", console.Long("username"), console.Short("u"))
+    console.Var(flagSet, &username, console.Long("username"), "the user to authenticate as.", console.Short("u"))
 })
 c.RegisterGroup(pods)
 ```
@@ -381,7 +462,10 @@ provider which fails to register or to boot stops the command, which exits with
 
 ```go
 func (c *ServeCommand) Providers() []provider.Provider {
-    return providers.BlogProviders()
+    return [
+        NewMySQLProvider(),
+        NewNATSProvider(),
+    ]
 }
 ```
 
@@ -420,29 +504,31 @@ func (c *ServeCommand) Providers() []provider.Provider {
 | Commands | `Commands() []string` | The names of the registered commands, in alphabetical order. |
 | Groups | `Groups() []string` | The names of the registered subgroups, in alphabetical order. |
 
-#### Flag Options
+#### Flag Names and Options
 
-| Option | Description |
-|--------|-------------|
+A `FlagName` is what a flag is defined by, and any of them may also be given as
+an option, to name a flag by more than one:
+
+| Name | Description |
+|------|-------------|
 | `Long(name)` | The long name of the flag, provided as `--name`. |
 | `Short(name)` | The short (single character) name of the flag, provided as `-n`. |
 | `Env(name)` | The environment variable the flag falls back to when it is not provided. |
 
-Defining a flag with none of them, with a short name longer than a character, or
-with a name which is already taken, panics: those are wiring mistakes rather than
-user input errors.
+| Option | Description |
+|--------|-------------|
+| `Long`, `Short`, `Env` | The other names the flag answers to. |
+| `Default(value)` | The value the flag defaults to, which is otherwise the value its variable already holds. |
+
+Defining a flag with a nameless name, with a short name longer than a character,
+or with a name which is already taken, panics: those are wiring mistakes rather
+than user input errors.
 
 #### FlagSet Methods
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| StringVar | `StringVar(p *string, value string, usage string, options ...FlagOption) *Flag` | Defines a string flag. |
-| BoolVar | `BoolVar(p *bool, value bool, usage string, options ...FlagOption) *Flag` | Defines a boolean flag, which takes no value. |
-| IntVar, Int64Var | `IntVar(p *int, value int, usage string, options ...FlagOption) *Flag` | Defines a signed integer flag. |
-| UintVar, Uint64Var | `UintVar(p *uint, value uint, usage string, options ...FlagOption) *Flag` | Defines an unsigned integer flag. |
-| Float64Var | `Float64Var(p *float64, value float64, usage string, options ...FlagOption) *Flag` | Defines a floating point flag. |
-| DurationVar | `DurationVar(p *time.Duration, value time.Duration, usage string, options ...FlagOption) *Flag` | Defines a `time.Duration` flag. |
-| Var | `Var(value Value, usage string, options ...FlagOption) *Flag` | Defines a flag with a value of your own. |
+| Var | `Var(value Value, name FlagName, usage string, options ...FlagOption) *Flag` | Defines a flag with a value of your own. A flag of a registered type is defined with the `console.Var` function, as Go has no generic methods. |
 | Struct | `Struct(target any) error` | Defines one flag per tagged field of a struct. |
 | Parse | `Parse(arguments []string) error` | Parses the flags, then loads the missing ones from the environment. |
 | Args, Arg, NArg | `Args() []string` | The arguments which follow the flags. |
@@ -450,8 +536,9 @@ user input errors.
 | Flags | `Flags() []*Flag` | The defined flags, in definition order. |
 | PrintDefaults | `PrintDefaults(w io.Writer)` | Writes the flags as they appear in a help, in alphabetical order. |
 
-A flag of your own implements `Value`, and may implement `IsBoolFlag() bool` to
-take no value and `Type() string` to name its type in the help:
+A value of your own implements `Value`, which is what a flag holds whatever its
+type. Registering a [flag type](#flag-types) is the way to parse a Go type, and
+implementing `Value` is the way for a type to parse itself:
 
 ```go
 type Value interface {
@@ -459,6 +546,16 @@ type Value interface {
     Set(string) error
 }
 ```
+
+It may implement any of the optional methods a registered type describes with a
+field:
+
+| Method | Description |
+|--------|-------------|
+| `Type() string` | Names the type of the value in the help. |
+| `ImplicitValue() (string, bool)` | The value the flag takes when it is provided without one, and whether it takes one at all. |
+| `IsBoolFlag() bool` | The boolean only form of `ImplicitValue`, which takes `true`. |
+| `Zero() string` | The string form of the zero value of the type, which the help doesn't mention as a default. |
 
 #### Interfaces
 
@@ -475,6 +572,9 @@ type Value interface {
 | NewConsole | `NewConsole(name, description string, writer, errWriter io.Writer, manager *provider.Manager) *Console` | A new console. |
 | NewGroup | `NewGroup(name, description string) *Group` | A new group of commands. |
 | NewFlagSet | `NewFlagSet(name string, errWriter io.Writer) *FlagSet` | A new set of flags. |
+| Var | `Var[T any](flagSet *FlagSet, p *T, name FlagName, usage string, options ...FlagOption) *Flag` | Defines a flag of the type of the variable it stores its value in, named by the name it is provided by. |
+| Default | `Default[T any](value T) FlagOption` | The value a flag defaults to. |
+| Register | `Register[T any](flagType Type[T])` | Registers how the flags of a Go type are parsed and presented. |
 | StructFlags | `StructFlags(target any) (func(*FlagSet), error)` | The configure function of a tagged struct, validated up front. |
 
 ## License

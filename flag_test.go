@@ -16,72 +16,72 @@ func TestFlagSet(t *testing.T) {
 	t.Run("a flag is provided by the names it defines", func(t *testing.T) {
 		testCases := []struct {
 			name      string
-			options   []FlagOption
+			names     []FlagName
 			arguments []string
 			env       map[string]string
 			want      string
 		}{
 			{
 				name:      "long name",
-				options:   []FlagOption{Long("username")},
+				names:     []FlagName{Long("username")},
 				arguments: []string{"--username", "admin"},
 				want:      "admin",
 			},
 			{
 				name:      "long name with an inline value",
-				options:   []FlagOption{Long("username")},
+				names:     []FlagName{Long("username")},
 				arguments: []string{"--username=admin"},
 				want:      "admin",
 			},
 			{
 				name:      "short name",
-				options:   []FlagOption{Short("u")},
+				names:     []FlagName{Short("u")},
 				arguments: []string{"-u", "admin"},
 				want:      "admin",
 			},
 			{
 				name:      "short name with an inline value",
-				options:   []FlagOption{Short("u")},
+				names:     []FlagName{Short("u")},
 				arguments: []string{"-u=admin"},
 				want:      "admin",
 			},
 			{
 				name:      "short name with an attached value",
-				options:   []FlagOption{Short("u")},
+				names:     []FlagName{Short("u")},
 				arguments: []string{"-uadmin"},
 				want:      "admin",
 			},
 			{
 				name:      "environment variable",
-				options:   []FlagOption{Env("CONSOLE_TEST_USERNAME")},
+				names:     []FlagName{Env("CONSOLE_TEST_USERNAME")},
 				arguments: nil,
 				env:       map[string]string{"CONSOLE_TEST_USERNAME": "admin"},
 				want:      "admin",
 			},
 			{
 				name:      "the command line wins over the environment",
-				options:   []FlagOption{Long("username"), Short("u"), Env("CONSOLE_TEST_USERNAME")},
+				names:     []FlagName{Long("username"), Short("u"), Env("CONSOLE_TEST_USERNAME")},
 				arguments: []string{"-u", "admin"},
 				env:       map[string]string{"CONSOLE_TEST_USERNAME": "root"},
 				want:      "admin",
 			},
 			{
 				name:      "the environment fills the missing flag",
-				options:   []FlagOption{Long("username"), Short("u"), Env("CONSOLE_TEST_USERNAME")},
+				names:     []FlagName{Long("username"), Short("u"), Env("CONSOLE_TEST_USERNAME")},
 				arguments: nil,
 				env:       map[string]string{"CONSOLE_TEST_USERNAME": "root"},
 				want:      "root",
 			},
 			{
 				name:      "an empty environment variable keeps the default value",
-				options:   []FlagOption{Long("username"), Env("CONSOLE_TEST_USERNAME")},
+				names:     []FlagName{Long("username"), Env("CONSOLE_TEST_USERNAME")},
 				arguments: nil,
 				env:       map[string]string{"CONSOLE_TEST_USERNAME": ""},
 				want:      "default",
 			},
 			{
 				name:      "an unset environment variable keeps the default value",
-				options:   []FlagOption{Long("username"), Env("CONSOLE_TEST_USERNAME")},
+				names:     []FlagName{Long("username"), Env("CONSOLE_TEST_USERNAME")},
 				arguments: nil,
 				want:      "default",
 			},
@@ -99,7 +99,7 @@ func TestFlagSet(t *testing.T) {
 				)
 
 				flagSet := NewFlagSet("test", &errWriter)
-				flag := flagSet.StringVar(&username, "default", "the user to authenticate as.", testCase.options...)
+				flag := defineFlag(flagSet, &username, "default", "the user to authenticate as.", testCase.names...)
 
 				if err := flagSet.Parse(testCase.arguments); err != nil {
 					t.Fatalf("unexpected error: %s", err)
@@ -127,37 +127,37 @@ func TestFlagSet(t *testing.T) {
 	t.Run("a name which is not defined is not enabled", func(t *testing.T) {
 		testCases := []struct {
 			name      string
-			options   []FlagOption
+			names     []FlagName
 			arguments []string
 			want      string
 		}{
 			{
 				name:      "long name of a short-only flag",
-				options:   []FlagOption{Short("u")},
+				names:     []FlagName{Short("u")},
 				arguments: []string{"--username", "admin"},
 				want:      "flag provided but not defined: --username\n",
 			},
 			{
 				name:      "short name of a long-only flag",
-				options:   []FlagOption{Long("username")},
+				names:     []FlagName{Long("username")},
 				arguments: []string{"-u", "admin"},
 				want:      "flag provided but not defined: -u\n",
 			},
 			{
 				name:      "any name of an env-only flag",
-				options:   []FlagOption{Env("CONSOLE_TEST_USERNAME")},
+				names:     []FlagName{Env("CONSOLE_TEST_USERNAME")},
 				arguments: []string{"--username", "admin"},
 				want:      "flag provided but not defined: --username\n",
 			},
 			{
 				name:      "a long name provided with a single dash",
-				options:   []FlagOption{Long("username")},
+				names:     []FlagName{Long("username")},
 				arguments: []string{"-username", "admin"},
 				want:      "flag provided but not defined: -username (did you mean --username?)\n",
 			},
 			{
 				name:      "a long name provided with a single dash and an inline value",
-				options:   []FlagOption{Long("username")},
+				names:     []FlagName{Long("username")},
 				arguments: []string{"-username=admin"},
 				want:      "flag provided but not defined: -username (did you mean --username?)\n",
 			},
@@ -171,7 +171,7 @@ func TestFlagSet(t *testing.T) {
 				)
 
 				flagSet := NewFlagSet("test", &errWriter)
-				flagSet.StringVar(&username, "default", "the user to authenticate as.", testCase.options...)
+				defineFlag(flagSet, &username, "default", "the user to authenticate as.", testCase.names...)
 
 				if err := flagSet.Parse(testCase.arguments); err == nil {
 					t.Fatal("an error was expected")
@@ -228,8 +228,8 @@ func TestFlagSet(t *testing.T) {
 				)
 
 				flagSet := NewFlagSet("test", &errWriter)
-				flagSet.BoolVar(&all, false, "targets everything.", Long("all"), Short("a"))
-				flagSet.BoolVar(&force, false, "does not ask for confirmation.", Long("force"), Short("f"))
+				Var(flagSet, &all, Long("all"), "targets everything.", Short("a"))
+				Var(flagSet, &force, Long("force"), "does not ask for confirmation.", Short("f"))
 
 				if err := flagSet.Parse(testCase.arguments); err != nil {
 					t.Fatalf("unexpected error: %s", err)
@@ -291,7 +291,7 @@ func TestFlagSet(t *testing.T) {
 				)
 
 				flagSet := NewFlagSet("test", &errWriter)
-				flagSet.IntVar(&port, 80, "the port to listen to.", Long("port"), Short("p"))
+				Var(flagSet, &port, Long("port"), "the port to listen to.", Short("p"), Default(80))
 
 				if err := flagSet.Parse(testCase.arguments); err != nil {
 					t.Fatalf("unexpected error: %s", err)
@@ -368,7 +368,7 @@ func TestFlagSet(t *testing.T) {
 
 				flagSet := NewFlagSet("test", &errWriter)
 				flagSet.Usage = func() { usages++ }
-				flagSet.IntVar(&port, 80, "the port to listen to.", Long("port"), Short("p"), Env("CONSOLE_TEST_PORT"))
+				Var(flagSet, &port, Long("port"), "the port to listen to.", Short("p"), Env("CONSOLE_TEST_PORT"), Default(80))
 
 				if err := flagSet.Parse(testCase.arguments); err == nil {
 					t.Fatal("an error was expected")
@@ -393,22 +393,22 @@ func TestFlagSet(t *testing.T) {
 		testCases := []struct {
 			name      string
 			arguments []string
-			options   []FlagOption
+			names     []FlagName
 		}{
 			{
 				name:      "-h",
 				arguments: []string{"-h"},
-				options:   []FlagOption{Long("port")},
+				names:     []FlagName{Long("port")},
 			},
 			{
 				name:      "--help",
 				arguments: []string{"--help"},
-				options:   []FlagOption{Long("port")},
+				names:     []FlagName{Long("port")},
 			},
 			{
 				name:      "-h of a defined short flag is not the help",
 				arguments: []string{"-h", "8080"},
-				options:   []FlagOption{Long("port"), Short("h")},
+				names:     []FlagName{Long("port"), Short("h")},
 			},
 		}
 
@@ -420,7 +420,7 @@ func TestFlagSet(t *testing.T) {
 				)
 
 				flagSet := NewFlagSet("test", &errWriter)
-				flagSet.IntVar(&port, 80, "the port to listen to.", testCase.options...)
+				defineFlag(flagSet, &port, 80, "the port to listen to.", testCase.names...)
 
 				err := flagSet.Parse(testCase.arguments)
 
@@ -450,14 +450,14 @@ func TestFlagSet(t *testing.T) {
 		)
 
 		flagSet := NewFlagSet("test", &errWriter)
-		flagSet.StringVar(&stringValue, "", "", Long("string"))
-		flagSet.BoolVar(&boolValue, false, "", Long("bool"))
-		flagSet.IntVar(&intValue, 0, "", Long("int"))
-		flagSet.Int64Var(&int64Value, 0, "", Long("int64"))
-		flagSet.UintVar(&uintValue, 0, "", Long("uint"))
-		flagSet.Uint64Var(&uint64Value, 0, "", Long("uint64"))
-		flagSet.Float64Var(&float64Value, 0, "", Long("float64"))
-		flagSet.DurationVar(&durationValue, 0, "", Long("duration"))
+		Var(flagSet, &stringValue, Long("string"), "")
+		Var(flagSet, &boolValue, Long("bool"), "")
+		Var(flagSet, &intValue, Long("int"), "")
+		Var(flagSet, &int64Value, Long("int64"), "")
+		Var(flagSet, &uintValue, Long("uint"), "")
+		Var(flagSet, &uint64Value, Long("uint64"), "")
+		Var(flagSet, &float64Value, Long("float64"), "")
+		Var(flagSet, &durationValue, Long("duration"), "")
 
 		arguments := []string{
 			"--string", "value",
@@ -501,7 +501,7 @@ func TestFlagSet(t *testing.T) {
 		)
 
 		flagSet := NewFlagSet("test", &errWriter)
-		flag := flagSet.IntVar(&port, 80, "the port to listen to.", Long("port"), Short("p"), Env("CONSOLE_TEST_PORT"))
+		flag := Var(flagSet, &port, Long("port"), "the port to listen to.", Short("p"), Env("CONSOLE_TEST_PORT"), Default(80))
 
 		for _, name := range []string{"port", "p", "CONSOLE_TEST_PORT"} {
 			if got := flagSet.Lookup(name); got != flag {
@@ -558,15 +558,15 @@ func TestFlagSet(t *testing.T) {
 		)
 
 		flagSet := NewFlagSet("test", &errWriter)
-		flagSet.StringVar(&username, "", "the user to authenticate as.", Long("username"), Short("u"), Env("CONSOLE_TEST_USERNAME"))
-		flagSet.BoolVar(&all, false, "targets every namespace.", Long("all"), Short("a"))
-		flagSet.IntVar(&port, 80, "the port to listen to.", Long("port"))
-		flagSet.Float64Var(&ratio, 1.5, "the sampling ratio.", Short("r"))
-		flagSet.DurationVar(&timeout, 10*time.Second, "the request timeout.", Long("timeout"), Short("t"))
-		flagSet.UintVar(&retries, 3, "the number of retries.", Long("retries"))
-		flagSet.StringVar(&secret, "", "the signing secret.", Env("CONSOLE_TEST_SECRET"))
-		flagSet.Int64Var(&threshold, 0, "the alerting threshold.", Long("threshold"))
-		flagSet.Uint64Var(&size, 0, "the maximum size.", Long("size"))
+		Var(flagSet, &username, Long("username"), "the user to authenticate as.", Short("u"), Env("CONSOLE_TEST_USERNAME"))
+		Var(flagSet, &all, Long("all"), "targets every namespace.", Short("a"))
+		Var(flagSet, &port, Long("port"), "the port to listen to.", Default(80))
+		Var(flagSet, &ratio, Short("r"), "the sampling ratio.", Default(1.5))
+		Var(flagSet, &timeout, Long("timeout"), "the request timeout.", Short("t"), Default(10*time.Second))
+		Var(flagSet, &retries, Long("retries"), "the number of retries.", Default(3))
+		Var(flagSet, &secret, Env("CONSOLE_TEST_SECRET"), "the signing secret.")
+		Var(flagSet, &threshold, Long("threshold"), "the alerting threshold.")
+		Var(flagSet, &size, Long("size"), "the maximum size.")
 
 		var b bytes.Buffer
 		flagSet.PrintDefaults(&b)
@@ -584,11 +584,11 @@ func TestFlagSet(t *testing.T) {
 		)
 
 		flagSet := NewFlagSet("test", nil)
-		flagSet.StringVar(&zone, "", "the zone to target.", Long("zone"))
-		flagSet.BoolVar(&all, false, "targets every namespace.", Long("all"), Short("a"))
-		flagSet.Float64Var(&ratio, 0, "the sampling ratio.", Short("r"))
-		flagSet.StringVar(&secret, "", "the signing secret.", Env("CONSOLE_TEST_SECRET"))
-		flagSet.BoolVar(&verbose, false, "logs every step.", Long("verbose"), Short("v"))
+		Var(flagSet, &zone, Long("zone"), "the zone to target.")
+		Var(flagSet, &all, Long("all"), "targets every namespace.", Short("a"))
+		Var(flagSet, &ratio, Short("r"), "the sampling ratio.")
+		Var(flagSet, &secret, Env("CONSOLE_TEST_SECRET"), "the signing secret.")
+		Var(flagSet, &verbose, Long("verbose"), "logs every step.", Short("v"))
 
 		var b bytes.Buffer
 		flagSet.PrintDefaults(&b)
@@ -621,8 +621,8 @@ func TestFlagSet(t *testing.T) {
 		)
 
 		flagSet := NewFlagSet("test", nil)
-		zoneFlag := flagSet.StringVar(&zone, "", "the zone to target.", Long("zone"))
-		allFlag := flagSet.BoolVar(&all, false, "targets every namespace.", Long("all"))
+		zoneFlag := Var(flagSet, &zone, Long("zone"), "the zone to target.")
+		allFlag := Var(flagSet, &all, Long("all"), "targets every namespace.")
 
 		flagSet.PrintDefaults(io.Discard)
 
@@ -633,32 +633,32 @@ func TestFlagSet(t *testing.T) {
 
 	t.Run("invalid definitions panic", func(t *testing.T) {
 		testCases := []struct {
-			name    string
-			options []FlagOption
+			name  string
+			names []FlagName
 		}{
 			{
-				name:    "no name at all",
-				options: nil,
+				name:  "no name at all",
+				names: nil,
 			},
 			{
-				name:    "a long name starting with a dash",
-				options: []FlagOption{Long("-port")},
+				name:  "a long name starting with a dash",
+				names: []FlagName{Long("-port")},
 			},
 			{
-				name:    "a long name containing an equal sign",
-				options: []FlagOption{Long("port=80")},
+				name:  "a long name containing an equal sign",
+				names: []FlagName{Long("port=80")},
 			},
 			{
-				name:    "a short name longer than a character",
-				options: []FlagOption{Short("port")},
+				name:  "a short name longer than a character",
+				names: []FlagName{Short("port")},
 			},
 			{
-				name:    "a short name which is a dash",
-				options: []FlagOption{Short("-")},
+				name:  "a short name which is a dash",
+				names: []FlagName{Short("-")},
 			},
 			{
-				name:    "a short name which is an equal sign",
-				options: []FlagOption{Short("=")},
+				name:  "a short name which is an equal sign",
+				names: []FlagName{Short("=")},
 			},
 		}
 
@@ -672,7 +672,7 @@ func TestFlagSet(t *testing.T) {
 
 				var port int
 
-				NewFlagSet("test", nil).IntVar(&port, 80, "the port to listen to.", testCase.options...)
+				defineFlag(NewFlagSet("test", nil), &port, 80, "the port to listen to.", testCase.names...)
 			})
 		}
 
@@ -686,8 +686,8 @@ func TestFlagSet(t *testing.T) {
 			var port, otherPort int
 
 			flagSet := NewFlagSet("test", nil)
-			flagSet.IntVar(&port, 80, "the port to listen to.", Long("port"), Short("p"))
-			flagSet.IntVar(&otherPort, 8080, "another port.", Long("other-port"), Short("p"))
+			Var(flagSet, &port, Long("port"), "the port to listen to.", Short("p"), Default(80))
+			Var(flagSet, &otherPort, Long("other-port"), "another port.", Short("p"), Default(8080))
 		})
 
 		t.Run("a long name defined twice", func(t *testing.T) {
@@ -700,8 +700,8 @@ func TestFlagSet(t *testing.T) {
 			var port, otherPort int
 
 			flagSet := NewFlagSet("test", nil)
-			flagSet.IntVar(&port, 80, "the port to listen to.", Long("port"), Short("p"))
-			flagSet.IntVar(&otherPort, 8080, "another port.", Long("port"), Short("o"))
+			Var(flagSet, &port, Long("port"), "the port to listen to.", Short("p"), Default(80))
+			Var(flagSet, &otherPort, Long("port"), "another port.", Short("o"), Default(8080))
 		})
 	})
 
@@ -714,49 +714,49 @@ func TestFlagSet(t *testing.T) {
 		}{
 			{
 				name:    "bool",
-				define:  func(fs *FlagSet) { var v bool; fs.BoolVar(&v, false, "", Long("flag"), Short("f")) },
+				define:  func(fs *FlagSet) { var v bool; Var(fs, &v, Long("flag"), "", Short("f")) },
 				invalid: "maybe",
 				want:    "can't be parsed as a boolean (true or false)",
 			},
 			{
 				name:    "int",
-				define:  func(fs *FlagSet) { var v int; fs.IntVar(&v, 0, "", Long("flag"), Short("f")) },
+				define:  func(fs *FlagSet) { var v int; Var(fs, &v, Long("flag"), "", Short("f")) },
 				invalid: "abc",
 				want:    "can't be parsed as an integer",
 			},
 			{
 				name:    "int out of range",
-				define:  func(fs *FlagSet) { var v int; fs.IntVar(&v, 0, "", Long("flag"), Short("f")) },
+				define:  func(fs *FlagSet) { var v int; Var(fs, &v, Long("flag"), "", Short("f")) },
 				invalid: "99999999999999999999",
 				want:    "out of range for an integer",
 			},
 			{
 				name:    "int64",
-				define:  func(fs *FlagSet) { var v int64; fs.Int64Var(&v, 0, "", Long("flag"), Short("f")) },
+				define:  func(fs *FlagSet) { var v int64; Var(fs, &v, Long("flag"), "", Short("f")) },
 				invalid: "abc",
 				want:    "can't be parsed as an integer",
 			},
 			{
 				name:    "uint",
-				define:  func(fs *FlagSet) { var v uint; fs.UintVar(&v, 0, "", Long("flag"), Short("f")) },
+				define:  func(fs *FlagSet) { var v uint; Var(fs, &v, Long("flag"), "", Short("f")) },
 				invalid: "-1",
 				want:    "can't be parsed as an unsigned integer (0 or greater)",
 			},
 			{
 				name:    "uint64",
-				define:  func(fs *FlagSet) { var v uint64; fs.Uint64Var(&v, 0, "", Long("flag"), Short("f")) },
+				define:  func(fs *FlagSet) { var v uint64; Var(fs, &v, Long("flag"), "", Short("f")) },
 				invalid: "-1",
 				want:    "can't be parsed as an unsigned integer (0 or greater)",
 			},
 			{
 				name:    "float64",
-				define:  func(fs *FlagSet) { var v float64; fs.Float64Var(&v, 0, "", Long("flag"), Short("f")) },
+				define:  func(fs *FlagSet) { var v float64; Var(fs, &v, Long("flag"), "", Short("f")) },
 				invalid: "abc",
 				want:    "can't be parsed as a floating point number",
 			},
 			{
 				name:    "duration",
-				define:  func(fs *FlagSet) { var v time.Duration; fs.DurationVar(&v, 0, "", Long("flag"), Short("f")) },
+				define:  func(fs *FlagSet) { var v time.Duration; Var(fs, &v, Long("flag"), "", Short("f")) },
 				invalid: "abc",
 				want:    `can't be parsed as a duration (such as "300ms", "1.5h" or "2h45m")`,
 			},
@@ -797,7 +797,7 @@ func TestFlagSet(t *testing.T) {
 			)
 
 			flagSet := NewFlagSet("test", nil)
-			flagSet.Var(&value, "a value of your own.", Long("custom"))
+			flagSet.Var(&value, Long("custom"), "a value of your own.")
 			flagSet.PrintDefaults(&help)
 
 			if !strings.Contains(help.String(), "--custom value") {
@@ -809,7 +809,7 @@ func TestFlagSet(t *testing.T) {
 			var value plainValue
 
 			flagSet := NewFlagSet("test", nil)
-			flag := flagSet.Var(&value, "a value of your own.", Long("custom"))
+			flag := flagSet.Var(&value, Long("custom"), "a value of your own.")
 
 			if flag.Value() != &value {
 				t.Error("the flag should hold the value it was defined with")
@@ -838,25 +838,30 @@ func TestFlagSet(t *testing.T) {
 		)
 
 		testCases := []struct {
-			name  string
-			value Value
-			want  string
+			name    string
+			pointer any
+			want    string
 		}{
-			{"bool", newBoolValue(false, &boolFlag), "bool"},
-			{"string", newStringValue("", &stringFlag), "string"},
-			{"int", newIntValue(0, &intFlag), "int"},
-			{"int64", newInt64Value(0, &int64Flag), "int"},
-			{"uint", newUintValue(0, &uintFlag), "uint"},
-			{"uint64", newUint64Value(0, &uint64Flag), "uint"},
-			{"float64", newFloat64Value(0, &float64Flag), "float"},
-			{"duration", newDurationValue(0, &durationFlag), "duration"},
+			{"bool", &boolFlag, "bool"},
+			{"string", &stringFlag, "string"},
+			{"int", &intFlag, "int"},
+			{"int64", &int64Flag, "int"},
+			{"uint", &uintFlag, "uint"},
+			{"uint64", &uint64Flag, "uint"},
+			{"float64", &float64Flag, "float"},
+			{"duration", &durationFlag, "duration"},
 		}
 
 		for _, testCase := range testCases {
 			t.Run(testCase.name, func(t *testing.T) {
-				typed, names := testCase.value.(typer)
+				value, err := valueOf(testCase.pointer)
+				if err != nil {
+					t.Fatalf("unexpected error: %s", err)
+				}
+
+				typed, names := value.(typer)
 				if !names {
-					t.Fatalf("%T should name its type", testCase.value)
+					t.Fatalf("%T should name its type", value)
 				}
 
 				if got := typed.Type(); got != testCase.want {
@@ -876,13 +881,42 @@ func TestFlagSet(t *testing.T) {
 		}
 	})
 
-	t.Run("an error which is not a number error is kept as it is", func(t *testing.T) {
-		err := errors.New("not a strconv error")
+	t.Run("a type which expects nothing in particular keeps the error of its parser", func(t *testing.T) {
+		var (
+			flagType = Type[string]{Parse: func(string) (string, error) { return "", errors.New("nope") }}
+			flag     string
+		)
 
-		if got := numError(err, "an integer"); !errors.Is(got, err) {
-			t.Errorf("unexpected error, want %v got %v", err, got)
+		flagSet := NewFlagSet("test", io.Discard)
+		flagSet.Var(&value[string]{pointer: &flag, flagType: flagType}, Long("flag"), "")
+
+		want := `invalid value "anything" for flag --flag: nope`
+
+		if err := flagSet.Parse([]string{"--flag=anything"}); err == nil || err.Error() != want {
+			t.Errorf("unexpected error, want %q got %v", want, err)
 		}
 	})
+}
+
+// defineFlag defines a flag from a list of names, the first of which is the one
+// it is defined by, and from the value it defaults to. A list which is empty
+// leaves the flag nameless, which is what the definition it panics on looks
+// like.
+func defineFlag[T any](flagSet *FlagSet, p *T, value T, usage string, names ...FlagName) *Flag {
+	var (
+		name    FlagName
+		options = []FlagOption{Default(value)}
+	)
+
+	if len(names) > 0 {
+		name = names[0]
+
+		for _, other := range names[1:] {
+			options = append(options, other)
+		}
+	}
+
+	return Var(flagSet, p, name, usage, options...)
 }
 
 // plainValue is a flag value which names no type of its own, so the help falls

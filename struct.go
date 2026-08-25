@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"time"
 )
 
 // The struct tags a field may carry to describe the flag it is bound to.
@@ -60,10 +59,6 @@ var (
 	// ErrUnexportedField is returned for a tagged field which cannot be addressed.
 	ErrUnexportedField = errors.New("an unexported field cannot be bound to a flag")
 
-	// ErrUnsupportedType is returned for a tagged field of a type no flag can
-	// be defined for.
-	ErrUnsupportedType = errors.New("unsupported field type")
-
 	// ErrInvalidDefault is returned for a "default" tag the type of the field
 	// cannot be parsed from.
 	ErrInvalidDefault = errors.New("invalid default value")
@@ -93,6 +88,10 @@ func (e *FieldError) Unwrap() error { return e.Err }
 
 // Struct defines one flag per tagged field of target, which has to be a non
 // nil pointer to a struct.
+//
+// A field is of any registered type, which the Go types are out of the box, or
+// of a type whose pointer implements [Value] and carries its own parsing.
+// [Register] is what a type of your own is made usable by.
 //
 // The value a field already holds becomes the default value of its flag, so a
 // struct is given its defaults by being populated before it is bound. A
@@ -151,23 +150,34 @@ type fieldTags struct {
 // named reports whether the field defines a name the flag is reachable by.
 func (t fieldTags) named() bool { return t.long != "" || t.short != "" || t.env != "" }
 
-// options builds the flag options the tags describe.
-func (t fieldTags) options() []FlagOption {
-	options := make([]FlagOption, 0, 3)
+// names builds the name the flag is defined by, which is the first one the
+// field claims, and the options the other ones are given as. A field which
+// claims none of them is rejected before this is called.
+func (t fieldTags) names() (FlagName, []FlagOption) {
+	claimed := make([]FlagName, 0, 3)
 
 	if t.long != "" {
-		options = append(options, Long(t.long))
+		claimed = append(claimed, Long(t.long))
 	}
 
 	if t.short != "" {
-		options = append(options, Short(t.short))
+		claimed = append(claimed, Short(t.short))
 	}
 
 	if t.env != "" {
-		options = append(options, Env(t.env))
+		claimed = append(claimed, Env(t.env))
 	}
 
-	return options
+	if len(claimed) == 0 {
+		return nil, nil
+	}
+
+	options := make([]FlagOption, 0, len(claimed)-1)
+	for _, other := range claimed[1:] {
+		options = append(options, other)
+	}
+
+	return claimed[0], options
 }
 
 // readTags reads the flag tags of a field. It reports whether the field
@@ -208,6 +218,7 @@ func readTags(tag reflect.StructTag) (fieldTags, bool) {
 type plannedFlag struct {
 	field   string // the name of the field, to report the errors with.
 	value   Value
+	name    FlagName
 	usage   string
 	long    string
 	short   string
@@ -322,13 +333,16 @@ func (p *flagPlan) walk(value reflect.Value, path string, names *nameSet, visiti
 			names.shorts[tags.short] = name
 		}
 
+		leading, options := tags.names()
+
 		p.flags = append(p.flags, plannedFlag{
 			field:   name,
 			value:   flagValue,
+			name:    leading,
 			usage:   tags.usage,
 			long:    tags.long,
 			short:   tags.short,
-			options: tags.options(),
+			options: options,
 		})
 	}
 
@@ -414,7 +428,7 @@ func newFieldValue(field reflect.Value, tags fieldTags) (Value, error) {
 		field.SetZero()
 	}
 
-	value, err := newValue(field)
+	value, err := valueOf(field.Addr().Interface())
 	if err != nil {
 		return nil, err
 	}
@@ -426,35 +440,6 @@ func newFieldValue(field reflect.Value, tags fieldTags) (Value, error) {
 	}
 
 	return value, nil
-}
-
-// newValue wraps a field in the flag value which parses into it.
-func newValue(field reflect.Value) (Value, error) {
-	switch pointer := field.Addr().Interface().(type) {
-	case *time.Duration:
-		// a defined type of its own, so it is matched before the integers.
-		return newDurationValue(*pointer, pointer), nil
-	case *string:
-		return newStringValue(*pointer, pointer), nil
-	case *bool:
-		return newBoolValue(*pointer, pointer), nil
-	case *int:
-		return newIntValue(*pointer, pointer), nil
-	case *int64:
-		return newInt64Value(*pointer, pointer), nil
-	case *uint:
-		return newUintValue(*pointer, pointer), nil
-	case *uint64:
-		return newUint64Value(*pointer, pointer), nil
-	case *float64:
-		return newFloat64Value(*pointer, pointer), nil
-	case Value:
-		// a field whose pointer implements Value carries its own parsing,
-		// which is the struct equivalent of FlagSet.Var.
-		return pointer, nil
-	default:
-		return nil, fmt.Errorf("%w %s", ErrUnsupportedType, field.Type())
-	}
 }
 
 // bind defines the planned flags on the flag set. The names are checked
@@ -478,7 +463,7 @@ func (p *flagPlan) bind(f *FlagSet) error {
 	}
 
 	for _, planned := range p.flags {
-		f.Var(planned.value, planned.usage, planned.options...)
+		f.Var(planned.value, planned.name, planned.usage, planned.options...)
 	}
 
 	return nil

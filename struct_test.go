@@ -272,7 +272,7 @@ func TestFlagSetStruct(t *testing.T) {
 		var host string
 
 		flagSet := NewFlagSet("app", &bytes.Buffer{})
-		flagSet.StringVar(&host, "", "the host.", Long("host"))
+		Var(flagSet, &host, Long("host"), "the host.")
 
 		err := flagSet.Struct(&configs{})
 		if !errors.Is(err, ErrDuplicateName) {
@@ -291,7 +291,7 @@ func TestFlagSetStruct(t *testing.T) {
 		var host string
 
 		flagSet := NewFlagSet("app", &bytes.Buffer{})
-		flagSet.StringVar(&host, "", "the host.", Short("H"))
+		Var(flagSet, &host, Short("H"), "the host.")
 
 		err := flagSet.Struct(&configs{})
 		if !errors.Is(err, ErrDuplicateName) {
@@ -913,7 +913,7 @@ func TestStructFlags(t *testing.T) {
 		var host string
 
 		flagSet := NewFlagSet("app", &bytes.Buffer{})
-		flagSet.StringVar(&host, "", "the host.", Long("host"))
+		Var(flagSet, &host, Long("host"), "the host.")
 
 		configure(flagSet)
 	})

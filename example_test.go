@@ -2,8 +2,10 @@ package console_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/danceable/provider"
 
@@ -21,13 +23,14 @@ func (c *listCommand) Description() string { return "lists the pods." }
 func (c *listCommand) Usage() string       { return "kubectl pods list [flags]" }
 
 func (c *listCommand) Configure(flagSet *console.FlagSet) {
-	flagSet.IntVar(
+	console.Var(
+		flagSet,
 		&c.limit,
-		10,
-		"the maximum number of pods to show.",
 		console.Long("limit"),
+		"the maximum number of pods to show.",
 		console.Short("l"),
 		console.Env("KUBECTL_LIMIT"),
+		console.Default(10),
 	)
 }
 
@@ -42,7 +45,7 @@ func (c *listCommand) Run(ctx context.Context) console.ExitStatus {
 func kubectl(all *bool) *console.Console {
 	pods := console.NewGroup("pods", "manages the pods.").
 		Flags(func(flagSet *console.FlagSet) {
-			flagSet.BoolVar(all, false, "targets the pods of every namespace.", console.Long("all"), console.Short("a"))
+			console.Var(flagSet, all, console.Long("all"), "targets the pods of every namespace.", console.Short("a"))
 		}).
 		Register(&listCommand{all: all})
 
@@ -103,7 +106,7 @@ type contextScope struct {
 func (s *contextScope) bind(flagSet *console.FlagSet, defaultContext string) {
 	s.flagSet = flagSet
 
-	flagSet.StringVar(&s.context, defaultContext, "the context to work against.", console.Long("context"))
+	console.Var(flagSet, &s.context, console.Long("context"), "the context to work against.", console.Default(defaultContext))
 }
 
 // provided reports whether the flag was provided at this level.
@@ -194,4 +197,61 @@ func Example_scopedFlags() {
 	// kubectl=server-1 get=- pods=- => server-1
 	// kubectl=- get=staging pods=- => staging
 	// kubectl=- get=- pods=- => default
+}
+
+// logLevel is a type of its own, whose flags are defined by registering how it
+// is parsed rather than by writing a value for it.
+type logLevel int
+
+const (
+	debugLevel logLevel = iota
+	infoLevel
+	errorLevel
+)
+
+// logLevels names the levels, in the order they are defined in.
+var logLevels = []string{"debug", "info", "error"}
+
+func (l logLevel) String() string { return logLevels[l] }
+
+// parseLogLevel is the parser the level type is registered with.
+func parseLogLevel(argument string) (logLevel, error) {
+	if level := slices.Index(logLevels, argument); level >= 0 {
+		return logLevel(level), nil
+	}
+
+	return 0, errors.New("unknown level")
+}
+
+// Registering a type is what makes it usable as a flag: the parser is handed
+// the argument, and the flag set writes what it returns into the variable the
+// flag was defined with.
+func ExampleRegister() {
+	console.Register(console.Type[logLevel]{
+		Name:    "level",
+		Expects: "a level (debug, info or error)",
+		Parse:   parseLogLevel,
+	})
+
+	var level logLevel
+
+	flagSet := console.NewFlagSet("app", os.Stdout)
+	console.Var(flagSet, &level, console.Long("level"), "the level to log at.", console.Short("l"), console.Default(infoLevel))
+
+	if err := flagSet.Parse([]string{"-l", "debug"}); err == nil {
+		fmt.Println("logging at the", level, "level")
+	}
+
+	// a value the parser rejects is explained with what the type expects, and
+	// leaves the flag with the value it already held.
+	flagSet.Parse([]string{"--level=loud"})
+
+	// the type names itself in the help, next to the default value of the flag.
+	flagSet.PrintDefaults(os.Stdout)
+
+	// Output:
+	// logging at the debug level
+	// invalid value "loud" for flag --level: can't be parsed as a level (debug, info or error)
+	//   -l, --level level  the level to log at. (default info)
+	//   -h, --help         shows this help message.
 }

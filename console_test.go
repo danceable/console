@@ -79,8 +79,8 @@ func TestConsole(t *testing.T) {
 						"this is a test usage",
 						0,
 						func(fs *FlagSet) {
-							fs.BoolVar(&boolArg, false, "test bool argument", Long("boolArg"))
-							fs.IntVar(&intArg, 666, "test int argument", Long("intArg"))
+							Var(fs, &boolArg, Long("boolArg"), "test bool argument")
+							Var(fs, &intArg, Long("intArg"), "test int argument", Default(666))
 						},
 					)
 
@@ -127,9 +127,9 @@ func TestConsole(t *testing.T) {
 						"this is a test usage",
 						0,
 						func(fs *FlagSet) {
-							fs.IntVar(&port, 80, "specifies which port server should listen to.", Long("port"), Short("p"), Env("SERVER_PORT"))
-							fs.StringVar(&name, "", "specifies the unique name of the worker.", Long("name"), Env("WORKER_NAME"))
-							fs.BoolVar(&all, false, "runs on every namespace.", Short("a"))
+							Var(fs, &port, Long("port"), "specifies which port server should listen to.", Short("p"), Env("SERVER_PORT"), Default(80))
+							Var(fs, &name, Long("name"), "specifies the unique name of the worker.", Env("WORKER_NAME"))
+							Var(fs, &all, Short("a"), "runs on every namespace.")
 						},
 					))
 
@@ -270,8 +270,10 @@ func TestConsole(t *testing.T) {
 			"this is a test usage",
 			0,
 			func(fs *FlagSet) {
-				fs.BoolVar(&boolArg, false, "test bool argument", Long("boolArg"))
-				fs.IntVar(&intArg, 666, "test int argument", Long("intArg"))
+				// the command is configured again on every run, and the
+				// default value is what gives the flags back their value.
+				Var(fs, &boolArg, Long("boolArg"), "test bool argument", Default(false))
+				Var(fs, &intArg, Long("intArg"), "test int argument", Default(666))
 			},
 		)
 
@@ -955,11 +957,11 @@ func kubectl(writer, errWriter *bytes.Buffer) (*Console, *kubectlFixture) {
 
 	console := NewConsole("kubectl", "controls the cluster manager.", writer, errWriter, provider.Default)
 	console.Flags(func(fs *FlagSet) {
-		fs.StringVar(&fixture.username, "", "the user to authenticate as.", Long("username"), Short("u"), Env("KUBECTL_USERNAME"))
+		Var(fs, &fixture.username, Long("username"), "the user to authenticate as.", Short("u"), Env("KUBECTL_USERNAME"))
 	})
 
 	list := NewSpyCommand("list", "lists the pods.", "kubectl pods list [flags]", 0, func(fs *FlagSet) {
-		fs.IntVar(&fixture.limit, 10, "the maximum number of pods to show.", Long("limit"), Short("l"), Env("KUBECTL_LIMIT"))
+		Var(fs, &fixture.limit, Long("limit"), "the maximum number of pods to show.", Short("l"), Env("KUBECTL_LIMIT"), Default(10))
 	})
 	list.runFunc = func(fs *FlagSet) {
 		fixture.executed, fixture.arguments = "list", fs.Args()
@@ -974,7 +976,7 @@ func kubectl(writer, errWriter *bytes.Buffer) (*Console, *kubectlFixture) {
 	pods := NewGroup("pods", "manages the pods.").
 		WithUsage("kubectl pods [flags] <command> [command arguments]").
 		Flags(func(fs *FlagSet) {
-			fs.BoolVar(&fixture.all, false, "targets the pods of every namespace.", Long("all"), Short("a"))
+			Var(fs, &fixture.all, Long("all"), "targets the pods of every namespace.", Short("a"))
 		}).
 		Register(list).
 		RegisterGroup(nodes)
@@ -1002,7 +1004,7 @@ type contextFixture struct {
 func (f *contextFixture) bind(flagSet *FlagSet, defaultContext string) {
 	f.flagSet = flagSet
 
-	flagSet.StringVar(&f.context, defaultContext, "the context to work against.", Long("context"))
+	Var(flagSet, &f.context, Long("context"), "the context to work against.", Default(defaultContext))
 }
 
 // provided reports whether the flag was provided at this level.

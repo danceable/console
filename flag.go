@@ -7,9 +7,7 @@ import (
 	"io"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
-	"time"
 )
 
 // ErrHelp is the error returned when the help flag (-h or --help) is provided
@@ -25,8 +23,15 @@ type Value interface {
 	Set(string) error
 }
 
-// boolValuer is implemented by values that may be provided without an explicit
-// value, e.g. "--verbose" instead of "--verbose=true".
+// implicitValuer is implemented by values that may be provided without an
+// explicit value, e.g. "--verbose" instead of "--verbose=true", and that name
+// the value they take then.
+type implicitValuer interface {
+	ImplicitValue() (string, bool)
+}
+
+// boolValuer is the boolean only form of implicitValuer, which a value of your
+// own may implement instead.
 type boolValuer interface {
 	IsBoolFlag() bool
 }
@@ -34,6 +39,12 @@ type boolValuer interface {
 // typer is implemented by values that name their own type in the help output.
 type typer interface {
 	Type() string
+}
+
+// zeroer is implemented by values that know the string form of the zero value
+// of their type, which the help doesn't mention as a default.
+type zeroer interface {
+	Zero() string
 }
 
 // Flag represents the state of a single flag.
@@ -79,24 +90,49 @@ func (f *Flag) Provided() bool { return f.provided }
 // FromEnv reports whether the flag's value was loaded from the environment.
 func (f *Flag) FromEnv() bool { return f.fromEnv }
 
-// FlagOption defines an optional property of a flag.
-type FlagOption func(*Flag)
+// FlagOption defines an optional property of a flag, such as the value it
+// defaults to or the other names it answers to.
+type FlagOption interface {
+	apply(*Flag)
+}
+
+// FlagName is a name a flag is reachable by: a long name, a short name or an
+// environment variable. A flag which defines none of them can never be
+// provided, which is why [Var] and [FlagSet.Var] take one apart from their
+// options: the first name is what defines a flag, the other ones are optional.
+type FlagName interface {
+	FlagOption
+
+	// name tells a name from the other options of a flag.
+	name()
+}
+
+// flagOption turns a function into a FlagOption.
+type flagOption func(*Flag)
+
+func (o flagOption) apply(flag *Flag) { o(flag) }
+
+// flagName turns a function into a FlagName.
+type flagName func(*Flag)
+
+func (n flagName) apply(flag *Flag) { n(flag) }
+func (n flagName) name()            {}
 
 // Long defines the long name of a flag, which is provided as "--name".
-func Long(name string) FlagOption {
-	return func(f *Flag) { f.long = name }
+func Long(name string) FlagName {
+	return flagName(func(f *Flag) { f.long = name })
 }
 
 // Short defines the short (single character) name of a flag, which is provided
 // as "-n".
-func Short(name string) FlagOption {
-	return func(f *Flag) { f.short = name }
+func Short(name string) FlagName {
+	return flagName(func(f *Flag) { f.short = name })
 }
 
 // Env defines the environment variable a flag falls back to when it is not
 // provided on the command line. Empty environment variables are ignored.
-func Env(name string) FlagOption {
-	return func(f *Flag) { f.env = name }
+func Env(name string) FlagName {
+	return flagName(func(f *Flag) { f.env = name })
 }
 
 // FlagSet represents a set of defined flags.
@@ -181,62 +217,57 @@ func (f *FlagSet) Arg(i int) string {
 // NArg returns the number of non-flag arguments.
 func (f *FlagSet) NArg() int { return len(f.args) }
 
-// Var defines a flag with the given value and usage. At least one of the Long,
-// Short or Env options must be provided.
-func (f *FlagSet) Var(value Value, usage string, options ...FlagOption) *Flag {
-	flag := &Flag{
-		usage:    usage,
-		value:    value,
-		defValue: value.String(),
+// Var defines a flag with the given value, name and usage. The name is what the
+// flag is provided by, and the other names it answers to are given as options:
+//
+//	flagSet.Var(&level, console.Long("level"), "the level to log at.", console.Short("l"), console.Env("LOG_LEVEL"))
+func (f *FlagSet) Var(value Value, name FlagName, usage string, options ...FlagOption) *Flag {
+	flag := &Flag{usage: usage, value: value}
+
+	if name != nil {
+		name.apply(flag)
 	}
 
 	for _, option := range options {
-		option(flag)
+		option.apply(flag)
 	}
+
+	// the options have their say before the default value is read, as a
+	// Default option writes it into the variable the flag is bound to.
+	flag.defValue = value.String()
 
 	f.define(flag)
 
 	return flag
 }
 
-// StringVar defines a string flag which stores its value in p.
-func (f *FlagSet) StringVar(p *string, value string, usage string, options ...FlagOption) *Flag {
-	return f.Var(newStringValue(value, p), usage, options...)
-}
+// Var defines a flag of the type of the variable it stores its value in, which
+// is where the parsed value is written:
+//
+//	var port int
+//
+//	console.Var(flagSet, &port, console.Long("port"), "the port to listen to.", console.Short("p"), console.Default(80))
+//
+// A flag is defined by the name it is provided by, which is a [Long] name, a
+// [Short] name or an [Env] variable. The other names it answers to are given
+// as options, along with the value it defaults to.
+//
+// The type of the variable has to be registered, which the Go types are by the
+// package itself. [Register] is what a type of your own is made usable by, and
+// a variable whose pointer implements [Value] carries its own parsing.
+//
+// The flag defaults to the value the variable already holds, which a [Default]
+// option overrides.
+//
+// It panics when no flag can be defined for the type of the variable, as a
+// definition error is a programming mistake rather than user input.
+func Var[T any](flagSet *FlagSet, p *T, name FlagName, usage string, options ...FlagOption) *Flag {
+	flagValue, err := valueOf(p)
+	if err != nil {
+		panic(fmt.Sprintf("console: %s: %s", flagSet.name, err))
+	}
 
-// BoolVar defines a boolean flag which stores its value in p.
-func (f *FlagSet) BoolVar(p *bool, value bool, usage string, options ...FlagOption) *Flag {
-	return f.Var(newBoolValue(value, p), usage, options...)
-}
-
-// IntVar defines an int flag which stores its value in p.
-func (f *FlagSet) IntVar(p *int, value int, usage string, options ...FlagOption) *Flag {
-	return f.Var(newIntValue(value, p), usage, options...)
-}
-
-// Int64Var defines an int64 flag which stores its value in p.
-func (f *FlagSet) Int64Var(p *int64, value int64, usage string, options ...FlagOption) *Flag {
-	return f.Var(newInt64Value(value, p), usage, options...)
-}
-
-// UintVar defines a uint flag which stores its value in p.
-func (f *FlagSet) UintVar(p *uint, value uint, usage string, options ...FlagOption) *Flag {
-	return f.Var(newUintValue(value, p), usage, options...)
-}
-
-// Uint64Var defines a uint64 flag which stores its value in p.
-func (f *FlagSet) Uint64Var(p *uint64, value uint64, usage string, options ...FlagOption) *Flag {
-	return f.Var(newUint64Value(value, p), usage, options...)
-}
-
-// Float64Var defines a float64 flag which stores its value in p.
-func (f *FlagSet) Float64Var(p *float64, value float64, usage string, options ...FlagOption) *Flag {
-	return f.Var(newFloat64Value(value, p), usage, options...)
-}
-
-// DurationVar defines a time.Duration flag which stores its value in p.
-func (f *FlagSet) DurationVar(p *time.Duration, value time.Duration, usage string, options ...FlagOption) *Flag {
-	return f.Var(newDurationValue(value, p), usage, options...)
+	return flagSet.Var(flagValue, name, usage, options...)
 }
 
 // define validates and registers a flag. It panics on definition errors, as
@@ -331,9 +362,9 @@ func (f *FlagSet) parseLong(argument string, arguments []string, i int) (int, er
 	}
 
 	if !hasValue {
-		switch {
-		case isBoolValue(flag.value):
-			value = "true"
+		switch implicit, takesNoValue := implicitValue(flag.value); {
+		case takesNoValue:
+			value = implicit
 		case i < len(arguments):
 			value, i = arguments[i], i+1
 		default:
@@ -342,7 +373,7 @@ func (f *FlagSet) parseLong(argument string, arguments []string, i int) (int, er
 	}
 
 	if err := flag.value.Set(value); err != nil {
-		return i, fmt.Errorf("invalid value %q for flag --%s: %s", value, name, err)
+		return i, fmt.Errorf("invalid value %q for flag --%s: %w", value, name, err)
 	}
 
 	flag.provided = true
@@ -375,13 +406,13 @@ func (f *FlagSet) parseShort(argument string, arguments []string, i int) (int, e
 
 		var value string
 
-		switch {
+		switch implicit, takesNoValue := implicitValue(flag.value); {
 		case strings.HasPrefix(rest, "="):
 			value, rest = rest[1:], ""
-		case isBoolValue(flag.value):
-			// a boolean flag takes no value, so the rest of the argument is
-			// made of other boolean flags, e.g. "-abc".
-			value = "true"
+		case takesNoValue:
+			// a flag which takes no value leaves the rest of the argument to
+			// the other flags it is combined with, e.g. "-abc".
+			value = implicit
 		case rest != "":
 			value, rest = rest, ""
 		case i < len(arguments):
@@ -391,7 +422,7 @@ func (f *FlagSet) parseShort(argument string, arguments []string, i int) (int, e
 		}
 
 		if err := flag.value.Set(value); err != nil {
-			return i, fmt.Errorf("invalid value %q for flag -%s: %s", value, name, err)
+			return i, fmt.Errorf("invalid value %q for flag -%s: %w", value, name, err)
 		}
 
 		flag.provided = true
@@ -416,7 +447,7 @@ func (f *FlagSet) parseEnv() error {
 		}
 
 		if err := flag.value.Set(value); err != nil {
-			return f.fail(fmt.Errorf("invalid value %q for environment variable %s: %s", value, flag.env, err))
+			return f.fail(fmt.Errorf("invalid value %q for environment variable %s: %w", value, flag.env, err))
 		}
 
 		flag.fromEnv = true
@@ -452,7 +483,7 @@ func (f *FlagSet) PrintDefaults(w io.Writer) {
 	width := len(help)
 
 	for _, flag := range flags {
-		name := flagName(flag)
+		name := nameColumn(flag)
 		names = append(names, name)
 
 		if len(name) > width {
@@ -461,7 +492,7 @@ func (f *FlagSet) PrintDefaults(w io.Writer) {
 	}
 
 	for i, flag := range flags {
-		fmt.Fprintf(w, "%-*s  %s\n", width, names[i], flagUsage(flag))
+		fmt.Fprintf(w, "%-*s  %s\n", width, names[i], usageColumn(flag))
 	}
 
 	fmt.Fprintf(w, "%-*s  %s\n", width, help, "shows this help message.")
@@ -499,8 +530,8 @@ func sortName(flag *Flag) string {
 	}
 }
 
-// flagName builds the left (name) column of a flag in the help output.
-func flagName(flag *Flag) string {
+// nameColumn builds the left (name) column of a flag in the help output.
+func nameColumn(flag *Flag) string {
 	var b strings.Builder
 
 	switch {
@@ -523,13 +554,13 @@ func flagName(flag *Flag) string {
 	return b.String()
 }
 
-// flagUsage builds the right (usage) column of a flag in the help output.
-func flagUsage(flag *Flag) string {
+// usageColumn builds the right (usage) column of a flag in the help output.
+func usageColumn(flag *Flag) string {
 	var b strings.Builder
 
 	fmt.Fprint(&b, flag.usage)
 
-	if !isZeroValue(flag.defValue) {
+	if !isZeroValue(flag) {
 		fmt.Fprintf(&b, " (default %s)", flag.defValue)
 	}
 
@@ -541,252 +572,52 @@ func flagUsage(flag *Flag) string {
 	return b.String()
 }
 
-// flagType returns the name of a value's type. Booleans take no value, so they
-// are not presented by a type.
+// flagType returns the name of a value's type. A value which takes no value on
+// the command line is presented by its name alone, and one which names no type
+// of its own is called a value.
 func flagType(value Value) string {
-	if isBoolValue(value) {
+	if _, takesNoValue := implicitValue(value); takesNoValue {
 		return ""
 	}
 
 	if v, ok := value.(typer); ok {
-		return v.Type()
+		if name := v.Type(); name != "" {
+			return name
+		}
 	}
 
 	return "value"
 }
 
-// isBoolValue reports whether a value may be provided without an explicit value.
-func isBoolValue(value Value) bool {
-	v, ok := value.(boolValuer)
+// implicitValue returns the value a flag takes when it is provided without one,
+// and reports whether it takes one at all.
+func implicitValue(value Value) (string, bool) {
+	switch v := value.(type) {
+	case implicitValuer:
+		return v.ImplicitValue()
+	case boolValuer:
+		if v.IsBoolFlag() {
+			return "true", true
+		}
+	}
 
-	return ok && v.IsBoolFlag()
+	return "", false
 }
 
-// isZeroValue reports whether a default value is the zero value of its type,
-// in which case it is not worth mentioning in the help output.
-func isZeroValue(value string) bool {
-	switch value {
+// isZeroValue reports whether a flag defaults to the zero value of its type, in
+// which case the default is not worth mentioning in the help output.
+//
+// A registered type knows its own zero value, while a value of your own is
+// compared against the string forms the Go types give theirs.
+func isZeroValue(flag *Flag) bool {
+	if v, ok := flag.value.(zeroer); ok {
+		return flag.defValue == v.Zero()
+	}
+
+	switch flag.defValue {
 	case "", "0", "false", "0s":
 		return true
 	default:
 		return false
 	}
-}
-
-type stringValue string
-
-func newStringValue(value string, p *string) *stringValue {
-	*p = value
-
-	return (*stringValue)(p)
-}
-
-func (s *stringValue) Set(value string) error {
-	*s = stringValue(value)
-
-	return nil
-}
-
-func (s *stringValue) String() string { return string(*s) }
-func (s *stringValue) Type() string   { return "string" }
-
-type boolValue bool
-
-func newBoolValue(value bool, p *bool) *boolValue {
-	*p = value
-
-	return (*boolValue)(p)
-}
-
-func (b *boolValue) Set(value string) error {
-	v, err := strconv.ParseBool(value)
-	if err != nil {
-		return cantParse("a boolean (true or false)")
-	}
-
-	*b = boolValue(v)
-
-	return nil
-}
-
-func (b *boolValue) String() string   { return strconv.FormatBool(bool(*b)) }
-func (b *boolValue) Type() string     { return "bool" }
-func (b *boolValue) IsBoolFlag() bool { return true }
-
-type intValue int
-
-func newIntValue(value int, p *int) *intValue {
-	*p = value
-
-	return (*intValue)(p)
-}
-
-func (i *intValue) Set(value string) error {
-	v, err := strconv.ParseInt(value, 0, strconv.IntSize)
-	if err != nil {
-		return numError(err, "an integer")
-	}
-
-	*i = intValue(v)
-
-	return nil
-}
-
-func (i *intValue) String() string { return strconv.Itoa(int(*i)) }
-func (i *intValue) Type() string   { return "int" }
-
-type int64Value int64
-
-func newInt64Value(value int64, p *int64) *int64Value {
-	*p = value
-
-	return (*int64Value)(p)
-}
-
-func (i *int64Value) Set(value string) error {
-	v, err := strconv.ParseInt(value, 0, 64)
-	if err != nil {
-		return numError(err, "an integer")
-	}
-
-	*i = int64Value(v)
-
-	return nil
-}
-
-func (i *int64Value) String() string { return strconv.FormatInt(int64(*i), 10) }
-func (i *int64Value) Type() string   { return "int" }
-
-type uintValue uint
-
-func newUintValue(value uint, p *uint) *uintValue {
-	*p = value
-
-	return (*uintValue)(p)
-}
-
-func (u *uintValue) Set(value string) error {
-	v, err := strconv.ParseUint(value, 0, strconv.IntSize)
-	if err != nil {
-		return numError(err, "an unsigned integer (0 or greater)")
-	}
-
-	*u = uintValue(v)
-
-	return nil
-}
-
-func (u *uintValue) String() string { return strconv.FormatUint(uint64(*u), 10) }
-func (u *uintValue) Type() string   { return "uint" }
-
-type uint64Value uint64
-
-func newUint64Value(value uint64, p *uint64) *uint64Value {
-	*p = value
-
-	return (*uint64Value)(p)
-}
-
-func (u *uint64Value) Set(value string) error {
-	v, err := strconv.ParseUint(value, 0, 64)
-	if err != nil {
-		return numError(err, "an unsigned integer (0 or greater)")
-	}
-
-	*u = uint64Value(v)
-
-	return nil
-}
-
-func (u *uint64Value) String() string { return strconv.FormatUint(uint64(*u), 10) }
-func (u *uint64Value) Type() string   { return "uint" }
-
-type float64Value float64
-
-func newFloat64Value(value float64, p *float64) *float64Value {
-	*p = value
-
-	return (*float64Value)(p)
-}
-
-func (f *float64Value) Set(value string) error {
-	v, err := strconv.ParseFloat(value, 64)
-	if err != nil {
-		return numError(err, "a floating point number")
-	}
-
-	*f = float64Value(v)
-
-	return nil
-}
-
-func (f *float64Value) String() string { return strconv.FormatFloat(float64(*f), 'g', -1, 64) }
-func (f *float64Value) Type() string   { return "float" }
-
-type durationValue time.Duration
-
-func newDurationValue(value time.Duration, p *time.Duration) *durationValue {
-	*p = value
-
-	return (*durationValue)(p)
-}
-
-func (d *durationValue) Set(value string) error {
-	v, err := time.ParseDuration(value)
-	if err != nil {
-		return cantParse(`a duration (such as "300ms", "1.5h" or "2h45m")`)
-	}
-
-	*d = durationValue(v)
-
-	return nil
-}
-
-func (d *durationValue) String() string { return time.Duration(*d).String() }
-func (d *durationValue) Type() string   { return "duration" }
-
-// The reasons a value rejects what it was given. They are never printed as
-// they are, a parseError explains them with the type the value expects.
-var (
-	errParse = errors.New("parse error")
-	errRange = errors.New("value out of range")
-)
-
-// parseError explains why a value was rejected, naming the type the value was
-// expected to be. It wraps errParse or errRange, so the reason stays matchable
-// while the message reads as a sentence once the flag set has prefixed it with
-// the value and the flag it belongs to:
-//
-//	invalid value "disabled" for environment variable POSTGRES_SSL_MODE: can't be parsed as a boolean (true or false)
-type parseError struct {
-	reason  error // errParse or errRange.
-	message string
-}
-
-func (e *parseError) Error() string { return e.message }
-func (e *parseError) Unwrap() error { return e.reason }
-
-// cantParse reports a value which doesn't fit the type of its flag at all.
-func cantParse(expected string) error {
-	return &parseError{reason: errParse, message: "can't be parsed as " + expected}
-}
-
-// outOfRange reports a value which fits the type of its flag but overflows it.
-func outOfRange(expected string) error {
-	return &parseError{reason: errRange, message: "out of range for " + expected}
-}
-
-// numError unwraps the verbose errors of the strconv package, naming the type
-// the value was expected to be.
-func numError(err error, expected string) error {
-	var numError *strconv.NumError
-	if !errors.As(err, &numError) {
-		return err
-	}
-
-	if errors.Is(numError.Err, strconv.ErrRange) {
-		return outOfRange(expected)
-	}
-
-	return cantParse(expected)
 }
