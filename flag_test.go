@@ -823,6 +823,62 @@ func TestFlagSet(t *testing.T) {
 				t.Errorf("unexpected value, got %q", flagSet.Lookup("custom").Value().String())
 			}
 		})
+
+		t.Run("takes no value when it is a boolean", func(t *testing.T) {
+			testCases := []struct {
+				name   string
+				isBool bool
+				want   string
+				args   []string
+			}{
+				{
+					name:   "a boolean is set to true",
+					isBool: true,
+					want:   "true",
+					args:   []string{"argument"},
+				},
+				{
+					name:   "any other value consumes the next argument",
+					isBool: false,
+					want:   "argument",
+				},
+			}
+
+			for _, testCase := range testCases {
+				t.Run(testCase.name, func(t *testing.T) {
+					value := &switchValue{isBool: testCase.isBool}
+
+					flagSet := NewFlagSet("test", io.Discard)
+					flagSet.Var(value, Long("switch"), "a value of your own.")
+
+					if err := flagSet.Parse([]string{"--switch", "argument"}); err != nil {
+						t.Fatalf("unexpected error: %s", err)
+					}
+
+					if value.value != testCase.want {
+						t.Errorf("unexpected value, want %q got %q", testCase.want, value.value)
+					}
+
+					if !equalArgs(testCase.args, flagSet.Args()) {
+						t.Errorf("unexpected arguments, want %v got %v", testCase.args, flagSet.Args())
+					}
+				})
+			}
+		})
+
+		t.Run("presents the default it was built with", func(t *testing.T) {
+			var help bytes.Buffer
+
+			value := plainValue{value: "localhost"}
+
+			flagSet := NewFlagSet("test", nil)
+			flagSet.Var(&value, Long("host"), "the host.")
+			flagSet.PrintDefaults(&help)
+
+			if !strings.Contains(help.String(), "the host. (default localhost)") {
+				t.Errorf("the default of the value should be presented:\n%s", help.String())
+			}
+		})
 	})
 
 	t.Run("the types of the values", func(t *testing.T) {
@@ -929,6 +985,22 @@ func (p *plainValue) String() string { return p.value }
 
 func (p *plainValue) Set(value string) error {
 	p.value = value
+
+	return nil
+}
+
+// switchValue is a flag value which tells whether it is a boolean through
+// IsBoolFlag alone, the way the values of the flag package do.
+type switchValue struct {
+	isBool bool
+	value  string
+}
+
+func (s *switchValue) String() string   { return s.value }
+func (s *switchValue) IsBoolFlag() bool { return s.isBool }
+
+func (s *switchValue) Set(value string) error {
+	s.value = value
 
 	return nil
 }

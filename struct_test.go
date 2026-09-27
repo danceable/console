@@ -264,6 +264,16 @@ func TestFlagSetStruct(t *testing.T) {
 		}
 	})
 
+	t.Run("a field which claims no name builds none", func(t *testing.T) {
+		// such a field is rejected with ErrNoName before its names are built,
+		// which still leaves nothing to define a flag by rather than panicking.
+		name, options := fieldTags{}.names()
+
+		if name != nil || options != nil {
+			t.Errorf("unexpected names, got %v and %v", name, options)
+		}
+	})
+
 	t.Run("a name already defined on the flag set is reported", func(t *testing.T) {
 		type configs struct {
 			Host string `long:"host"`
@@ -856,7 +866,7 @@ func TestStructFlags(t *testing.T) {
 
 		command := NewSpyCommand("list", "lists.", "app list", 0, nil)
 
-		console := NewConsole("app", "an app.", &writer, &errWriter, nil)
+		console := New("app", "an app.", &writer, &errWriter)
 		console.Flags(configure)
 		console.Register(command)
 

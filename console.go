@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
@@ -55,10 +56,22 @@ type Command interface {
 
 // Service is an optional interface that a Command can implement to provide
 // service providers whose lifecycle (register, boot and terminate) is managed
-// by the danceable service provider manager around the command's run.
+// by the console's Manager around the command's run.
 type Service interface {
 	// Providers returns the service providers required by the command.
 	Providers() []provider.Provider
+}
+
+// Manager manages the lifecycle of the service providers a Service requires. A
+// [*provider.Manager] implements it, which makes [provider.Default] one as well.
+type Manager interface {
+	// Register registers a service provider.
+	Register(provider.Provider)
+
+	// Run registers and boots the service providers, calls back the function
+	// given with [provider.WithCallback], waits for the context to be
+	// cancelled and then terminates the providers.
+	Run(context.Context, ...provider.Option) error
 }
 
 // Console represents a set of commands, which are optionally organized in
@@ -69,15 +82,15 @@ type Console struct {
 
 	writer    io.Writer // specifies where should write the regular output (normally os.Stdout).
 	errWriter io.Writer // specifies where should write errors (normally os.Stderr).
-	manager   *provider.Manager
+	manager   Manager   // runs the providers of a Service, which is the only command needing one.
 }
 
-// NewConsole returns a new Console.
+// New returns a new Console.
 //
 // A requested help is written to writer, while everything which goes along with
 // a non successful exit status (a usage error and the help which follows it, a
 // failing service) is written to errWriter.
-func NewConsole(name, description string, writer, errWriter io.Writer, manager *provider.Manager) *Console {
+func New(name, description string, writer, errWriter io.Writer) *Console {
 	if writer == nil {
 		writer = os.Stdout
 	}
@@ -91,8 +104,16 @@ func NewConsole(name, description string, writer, errWriter io.Writer, manager *
 		root:      NewGroup(name, description),
 		writer:    writer,
 		errWriter: errWriter,
-		manager:   manager,
 	}
+}
+
+// NewWithServiceProvider returns a new Console, the way New does, which
+// runs the service providers of its Service commands with the given manager.
+func NewWithServiceProvider(name, description string, writer, errWriter io.Writer, manager Manager) *Console {
+	c := New(name, description, writer, errWriter)
+	c.manager = manager
+
+	return c
 }
 
 // Writer returns the writer the regular output is written to.
@@ -220,6 +241,12 @@ func (c *Console) runCommand(ctx context.Context, command Command, path, argumen
 // runService registers the command's service providers on the manager, boots
 // them, runs the command and finally terminates the providers gracefully.
 func (c *Console) runService(ctx context.Context, cmd Command, service Service) ExitStatus {
+	if isNil(c.manager) {
+		fmt.Fprintf(c.errWriter, "console: %s: a service needs a manager to run its providers, see NewWithServiceProvider.\n", cmd.Name())
+
+		return ExitFailure
+	}
+
 	for _, p := range service.Providers() {
 		c.manager.Register(p)
 	}
@@ -244,4 +271,22 @@ func (c *Console) runService(ctx context.Context, cmd Command, service Service) 
 	}
 
 	return <-exitStatus
+}
+
+// isNil reports whether a value is nil, including a nil pointer, map, slice,
+// function or channel held by a non nil interface. Only those kinds can be nil:
+// reflect panics when it is asked about any other one.
+func isNil(value any) bool {
+	if value == nil {
+		return true
+	}
+
+	v := reflect.ValueOf(value)
+
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.UnsafePointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }

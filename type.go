@@ -216,9 +216,9 @@ func convert(given reflect.Value, target reflect.Type) (reflect.Value, bool) {
 	sourceClass, targetClass := classOf(source.Kind()), classOf(target.Kind())
 
 	switch {
-	case sourceClass == otherClass || sourceClass != targetClass:
-		return reflect.Value{}, false
 	case !source.ConvertibleTo(target):
+		return reflect.Value{}, false
+	case sourceClass == otherClass || sourceClass != targetClass:
 		return reflect.Value{}, false
 	case targetClass == numberClass && !fits(given, target):
 		return reflect.Value{}, false

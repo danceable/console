@@ -6,7 +6,7 @@
 // A command implements the [Command] interface. It defines its flags in
 // Configure and does its work in Run:
 //
-//	app := console.NewConsole(path.Base(os.Args[0]), "the application.", os.Stdout, os.Stderr, provider.Default)
+//	app := console.New(path.Base(os.Args[0]), "the application.", os.Stdout, os.Stderr)
 //	app.Register(blog.NewServeCommand())
 //
 //	os.Exit(app.Run(ctx, os.Args))
@@ -15,7 +15,11 @@
 // help which follows it) is written to the second one.
 //
 // A command which also implements [Service] gets its service providers
-// registered, booted and terminated around its run.
+// registered, booted and terminated around its run by a [Manager], which only
+// such a command needs. A console which runs one is built by
+// [NewWithServiceProvider], which takes the manager after the writers:
+//
+//	app := console.NewWithServiceProvider(path.Base(os.Args[0]), "the application.", os.Stdout, os.Stderr, provider.Default)
 //
 // # Flags
 //

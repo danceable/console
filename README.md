@@ -65,12 +65,11 @@ func main() {
     ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
     defer cancel()
 
-    c := console.NewConsole(
+    c := console.New(
         path.Base(os.Args[0]),
         "the application.",
         os.Stdout,
         os.Stderr,
-        provider.Default,
     )
 
     c.Register(blog.NewServeCommand())
@@ -256,7 +255,7 @@ if err != nil {
     log.Fatal(err)
 }
 
-console.NewConsole("app", "controls the app.", os.Stdout, os.Stderr, provider.Default).Flags(configure)
+console.New("app", "controls the app.", os.Stdout, os.Stderr).Flags(configure)
 ```
 
 `StructFlags` validates the struct and returns the configure function of a
@@ -431,7 +430,7 @@ console.NewGroup("pods", "manages the pods.").
 
 #### Writers
 
-`NewConsole` takes two writers. A requested help is written to the first one
+`New` takes two writers. A requested help is written to the first one
 (normally `os.Stdout`), while everything which goes along with a non successful
 exit status — a usage error, the help which follows it, a failing service — is
 written to the second one (normally `os.Stderr`):
@@ -462,12 +461,39 @@ provider which fails to register or to boot stops the command, which exits with
 
 ```go
 func (c *ServeCommand) Providers() []provider.Provider {
-    return [
+    return []provider.Provider{
         NewMySQLProvider(),
         NewNATSProvider(),
-    ]
+    }
 }
 ```
+
+The providers are run by the manager a console is built with by
+`NewWithServiceProvider`, which takes the parameters of `New` and the
+manager last. Only a console holding a service needs one. The console is not
+tied to the manager of danceable/provider: it depends on the `Manager` interface
+alone, which a `*provider.Manager` (such as `provider.Default`) implements as it
+is:
+
+```go
+type Manager interface {
+    Register(provider.Provider)
+    Run(context.Context, ...provider.Option) error
+}
+```
+
+```go
+c := console.NewWithServiceProvider(
+    path.Base(os.Args[0]),
+    "the application.",
+    os.Stdout,
+    os.Stderr,
+    provider.Default,
+)
+```
+
+A console built by `New` has no manager, so it refuses to run a service,
+which exits with `ExitFailure`.
 
 #### Exit Statuses
 
@@ -481,7 +507,8 @@ func (c *ServeCommand) Providers() []provider.Provider {
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| NewConsole | `NewConsole(name, description string, writer, errWriter io.Writer, manager *provider.Manager) *Console` | Creates a console which writes its output to `writer` and its errors to `errWriter`. |
+| New | `New(name, description string, writer, errWriter io.Writer) *Console` | Creates a console which writes its output to `writer` and its errors to `errWriter`. |
+| NewWithServiceProvider | `NewWithServiceProvider(name, description string, writer, errWriter io.Writer, manager Manager) *Console` | Creates a console as `New` does, whose services are run by `manager`. |
 | Register | `Register(commands ...Command) *Console` | Registers commands. |
 | RegisterGroup | `RegisterGroup(groups ...*Group) *Console` | Registers groups of commands. |
 | Flags | `Flags(configure func(*FlagSet)) *Console` | Defines the global flags, provided before the name of the first group or command. |
@@ -563,13 +590,15 @@ field:
 |-----------|---------|-------------|
 | Command | `Name()`, `Description()`, `Usage()`, `Configure(*FlagSet)`, `Run(ctx)` | A single command of the console. |
 | Service | `Providers()` | Optional interface for a command whose service providers are managed around its run. |
+| Manager | `Register(provider)`, `Run(ctx, options...)` | Manages the service providers of the services, as a `*provider.Manager` does. |
 | Value | `String()`, `Set(string)` | The dynamic value stored in a flag. |
 
 #### Package Functions
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| NewConsole | `NewConsole(name, description string, writer, errWriter io.Writer, manager *provider.Manager) *Console` | A new console. |
+| New | `New(name, description string, writer, errWriter io.Writer) *Console` | A new console. |
+| NewWithServiceProvider | `NewWithServiceProvider(name, description string, writer, errWriter io.Writer, manager Manager) *Console` | A new console, whose services are run by the given manager. |
 | NewGroup | `NewGroup(name, description string) *Group` | A new group of commands. |
 | NewFlagSet | `NewFlagSet(name string, errWriter io.Writer) *FlagSet` | A new set of flags. |
 | Var | `Var[T any](flagSet *FlagSet, p *T, name FlagName, usage string, options ...FlagOption) *Flag` | Defines a flag of the type of the variable it stores its value in, named by the name it is provided by. |

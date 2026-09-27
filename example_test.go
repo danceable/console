@@ -7,8 +7,6 @@ import (
 	"os"
 	"slices"
 
-	"github.com/danceable/provider"
-
 	"github.com/danceable/console"
 )
 
@@ -49,7 +47,7 @@ func kubectl(all *bool) *console.Console {
 		}).
 		Register(&listCommand{all: all})
 
-	c := console.NewConsole("kubectl", "controls the cluster manager.", os.Stdout, os.Stderr, provider.Default)
+	c := console.New("kubectl", "controls the cluster manager.", os.Stdout, os.Stderr)
 	c.RegisterGroup(pods)
 
 	return c
@@ -165,7 +163,7 @@ func kubectlContexts() *console.Console {
 		Flags(func(flagSet *console.FlagSet) { group.bind(flagSet, "staging") }).
 		Register(&podsCommand{root: root, group: group, own: own})
 
-	c := console.NewConsole("kubectl", "controls the cluster manager.", os.Stdout, os.Stderr, provider.Default)
+	c := console.New("kubectl", "controls the cluster manager.", os.Stdout, os.Stderr)
 	c.Flags(func(flagSet *console.FlagSet) { root.bind(flagSet, "default") })
 	c.RegisterGroup(get)
 

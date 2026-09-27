@@ -36,7 +36,7 @@ func TestConsole(t *testing.T) {
 			for _, testCase := range testCases {
 				t.Run(testCase.name, func(t *testing.T) {
 					var writer, errWriter bytes.Buffer
-					console := NewConsole("Test", "Test description", &writer, &errWriter, provider.Default)
+					console := New("Test", "Test description", &writer, &errWriter)
 
 					if exitStatus := console.Run(context.Background(), testCase.arguments); exitStatus != ExitSuccess {
 						t.Errorf("unexpected exit code, want %d got %d", ExitSuccess, exitStatus)
@@ -66,7 +66,7 @@ func TestConsole(t *testing.T) {
 			for _, testCase := range testCases {
 				t.Run(testCase.name, func(t *testing.T) {
 					var writer, errWriter bytes.Buffer
-					console := NewConsole("Test", "Test description", &writer, &errWriter, provider.Default)
+					console := New("Test", "Test description", &writer, &errWriter)
 
 					var (
 						boolArg bool
@@ -113,7 +113,7 @@ func TestConsole(t *testing.T) {
 			for _, testCase := range testCases {
 				t.Run(testCase.name, func(t *testing.T) {
 					var writer, errWriter bytes.Buffer
-					console := NewConsole("Test", "Test description", &writer, &errWriter, provider.Default)
+					console := New("Test", "Test description", &writer, &errWriter)
 
 					var (
 						port int
@@ -192,7 +192,7 @@ func TestConsole(t *testing.T) {
 		for _, testCase := range testCases {
 			t.Run(testCase.name, func(t *testing.T) {
 				var writer, errWriter bytes.Buffer
-				console := NewConsole("Test", "Test description", &writer, &errWriter, provider.Default)
+				console := New("Test", "Test description", &writer, &errWriter)
 
 				if exitStatus := console.Run(context.Background(), testCase.arguments); exitStatus != testCase.exitStatus {
 					t.Errorf("unexpected exit code, want %d got %d", testCase.exitStatus, exitStatus)
@@ -214,7 +214,7 @@ func TestConsole(t *testing.T) {
 
 		for _, status := range statuses {
 			var writer, errWriter bytes.Buffer
-			console := NewConsole("Test", "Test description", &writer, &errWriter, provider.Default)
+			console := New("Test", "Test description", &writer, &errWriter)
 
 			command := NewSpyCommand(
 				"command",
@@ -257,7 +257,7 @@ func TestConsole(t *testing.T) {
 
 	t.Run("test command arguments", func(t *testing.T) {
 		var writer, errWriter bytes.Buffer
-		console := NewConsole("Test", "Test description", &writer, &errWriter, provider.Default)
+		console := New("Test", "Test description", &writer, &errWriter)
 
 		var (
 			boolArg bool
@@ -422,14 +422,21 @@ func TestConsole(t *testing.T) {
 		})
 
 		t.Run("the writers fall back to the standard ones", func(t *testing.T) {
-			console := NewConsole("Test", "Test description", nil, nil, provider.Default)
-
-			if console.Writer() != os.Stdout {
-				t.Error("the regular output should fall back to os.Stdout")
+			consoles := map[string]*Console{
+				"New":                    New("Test", "Test description", nil, nil),
+				"NewWithServiceProvider": NewWithServiceProvider("Test", "Test description", nil, nil, newManager()),
 			}
 
-			if console.ErrWriter() != os.Stderr {
-				t.Error("the error output should fall back to os.Stderr")
+			for name, console := range consoles {
+				t.Run(name, func(t *testing.T) {
+					if console.Writer() != os.Stdout {
+						t.Error("the regular output should fall back to os.Stdout")
+					}
+
+					if console.ErrWriter() != os.Stderr {
+						t.Error("the error output should fall back to os.Stderr")
+					}
+				})
 			}
 		})
 	})
@@ -588,7 +595,7 @@ func TestConsole(t *testing.T) {
 
 		t.Run("a group can define its own help", func(t *testing.T) {
 			var writer, errWriter bytes.Buffer
-			console := NewConsole("Test", "Test description", &writer, &errWriter, provider.Default)
+			console := New("Test", "Test description", &writer, &errWriter)
 			console.RegisterGroup(NewGroup("pods", "manages the pods.").WithHelp("a totally custom help."))
 
 			if exitStatus := console.Run(context.Background(), []string{"Test", "pods", "--help"}); exitStatus != ExitSuccess {
@@ -623,7 +630,7 @@ func TestConsole(t *testing.T) {
 
 		t.Run("a group which only routes to subgroups lists no command", func(t *testing.T) {
 			var writer, errWriter bytes.Buffer
-			console := NewConsole("Test", "Test description", &writer, &errWriter, provider.Default)
+			console := New("Test", "Test description", &writer, &errWriter)
 			console.RegisterGroup(
 				NewGroup("pods", "manages the pods.").
 					RegisterGroup(NewGroup("nodes", "manages the nodes of the pods.")),
@@ -667,7 +674,7 @@ func TestConsole(t *testing.T) {
 		t.Run("the console has its own usage and help", func(t *testing.T) {
 			t.Run("usage", func(t *testing.T) {
 				var writer, errWriter bytes.Buffer
-				console := NewConsole("Test", "Test description", &writer, &errWriter, provider.Default)
+				console := New("Test", "Test description", &writer, &errWriter)
 				console.WithUsage("Test <command>")
 
 				console.Run(context.Background(), []string{"Test", "--help"})
@@ -679,7 +686,7 @@ func TestConsole(t *testing.T) {
 
 			t.Run("help", func(t *testing.T) {
 				var writer, errWriter bytes.Buffer
-				console := NewConsole("Test", "Test description", &writer, &errWriter, provider.Default)
+				console := New("Test", "Test description", &writer, &errWriter)
 				console.WithHelp("a totally custom help.")
 
 				console.Run(context.Background(), []string{"Test", "--help"})
@@ -732,7 +739,7 @@ func TestConsole(t *testing.T) {
 			serviceProvider := &SpyProvider{}
 			service := NewSpyService("serve", ExitSuccess, []provider.Provider{serviceProvider})
 
-			console := NewConsole("Test", "Test description", &writer, &errWriter, newManager())
+			console := NewWithServiceProvider("Test", "Test description", &writer, &errWriter, newManager())
 			console.Register(service)
 
 			if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitSuccess {
@@ -756,7 +763,7 @@ func TestConsole(t *testing.T) {
 
 			service := NewSpyService("serve", ExitFailure, nil)
 
-			console := NewConsole("Test", "Test description", &writer, &errWriter, newManager())
+			console := NewWithServiceProvider("Test", "Test description", &writer, &errWriter, newManager())
 			console.Register(service)
 
 			if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitFailure {
@@ -771,7 +778,7 @@ func TestConsole(t *testing.T) {
 
 			service := NewSpyService("serve", ExitSuccess, nil)
 
-			console := NewConsole("Test", "Test description", &writer, &errWriter, newManager())
+			console := NewWithServiceProvider("Test", "Test description", &writer, &errWriter, newManager())
 			console.Register(service)
 
 			if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitSuccess {
@@ -791,7 +798,7 @@ func TestConsole(t *testing.T) {
 			registerErr := errors.New("the provider cannot be registered")
 			service := NewSpyService("serve", ExitSuccess, []provider.Provider{&SpyProvider{registerErr: registerErr}})
 
-			console := NewConsole("Test", "Test description", &writer, &errWriter, newManager())
+			console := NewWithServiceProvider("Test", "Test description", &writer, &errWriter, newManager())
 			console.Register(service)
 
 			if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitFailure {
@@ -804,6 +811,121 @@ func TestConsole(t *testing.T) {
 
 			if !strings.Contains(errWriter.String(), registerErr.Error()) {
 				t.Errorf("unexpected error output: %s", errWriter.String())
+			}
+		})
+
+		t.Run("any manager runs the providers", func(t *testing.T) {
+			var writer, errWriter bytes.Buffer
+
+			serviceProvider := &SpyProvider{}
+			service := NewSpyService("serve", ExitSuccess, []provider.Provider{serviceProvider})
+
+			manager := &SpyManager{}
+
+			console := NewWithServiceProvider("Test", "Test description", &writer, &errWriter, manager)
+			console.Register(service)
+
+			if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitSuccess {
+				t.Errorf("unexpected exit code, want %d got %d", ExitSuccess, exitStatus)
+			}
+
+			if len(manager.providers) != 1 || manager.providers[0] != serviceProvider {
+				t.Errorf("the providers of the command should be registered on the manager, got %v", manager.providers)
+			}
+
+			if manager.RunCount != 1 {
+				t.Errorf("the manager should have run once, got %d", manager.RunCount)
+			}
+
+			if service.RunCount != 1 {
+				t.Errorf("the command should have run once, got %d", service.RunCount)
+			}
+
+			empty(t, "error", errWriter.String())
+		})
+
+		t.Run("a manager which can't be nil runs the providers", func(t *testing.T) {
+			var writer, errWriter bytes.Buffer
+
+			service := NewSpyService("serve", ExitSuccess, nil)
+
+			// a struct, which is a kind reflect can't ask whether it is nil,
+			// records into the spy it embeds.
+			manager := struct{ *SpyManager }{&SpyManager{}}
+
+			console := NewWithServiceProvider("Test", "Test description", &writer, &errWriter, manager)
+			console.Register(service)
+
+			if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitSuccess {
+				t.Errorf("unexpected exit code, want %d got %d", ExitSuccess, exitStatus)
+			}
+
+			if manager.RunCount != 1 {
+				t.Errorf("the manager should have run once, got %d", manager.RunCount)
+			}
+
+			if service.RunCount != 1 {
+				t.Errorf("the command should have run once, got %d", service.RunCount)
+			}
+
+			empty(t, "error", errWriter.String())
+		})
+
+		t.Run("a service is not run without a manager", func(t *testing.T) {
+			testCases := []struct {
+				name       string
+				newConsole func(writer, errWriter *bytes.Buffer) *Console
+			}{
+				{
+					name: "a console built without a manager",
+					newConsole: func(writer, errWriter *bytes.Buffer) *Console {
+						return New("Test", "Test description", writer, errWriter)
+					},
+				},
+				{
+					name: "a nil manager",
+					newConsole: func(writer, errWriter *bytes.Buffer) *Console {
+						return NewWithServiceProvider("Test", "Test description", writer, errWriter, nil)
+					},
+				},
+				{
+					name: "a nil provider manager",
+					newConsole: func(writer, errWriter *bytes.Buffer) *Console {
+						return NewWithServiceProvider("Test", "Test description", writer, errWriter, (*provider.Manager)(nil))
+					},
+				},
+			}
+
+			for _, testCase := range testCases {
+				t.Run(testCase.name, func(t *testing.T) {
+					var writer, errWriter bytes.Buffer
+
+					serviceProvider := &SpyProvider{}
+					service := NewSpyService("serve", ExitSuccess, []provider.Provider{serviceProvider})
+
+					console := testCase.newConsole(&writer, &errWriter)
+					console.Register(service)
+
+					if exitStatus := console.Run(context.Background(), []string{"", "serve"}); exitStatus != ExitFailure {
+						t.Errorf("unexpected exit code, want %d got %d", ExitFailure, exitStatus)
+					}
+
+					if service.RunCount != 0 {
+						t.Errorf("the command should not have run, got %d", service.RunCount)
+					}
+
+					counts := [3]int{serviceProvider.RegisterCount, serviceProvider.BootCount, serviceProvider.TerminateCount}
+					if counts != [3]int{0, 0, 0} {
+						t.Errorf("unexpected provider lifecycle, want [0 0 0] got %v", counts)
+					}
+
+					want := "console: serve: a service needs a manager to run its providers, see NewWithServiceProvider.\n"
+					if diff := cmp.Diff(want, errWriter.String()); diff != "" {
+						t.Errorf("console error output mismatch (-want +got):\n%s", diff)
+					}
+
+					empty(t, "regular", writer.String())
+				})
 			}
 		})
 	})
@@ -955,7 +1077,7 @@ type kubectlFixture struct {
 func kubectl(writer, errWriter *bytes.Buffer) (*Console, *kubectlFixture) {
 	fixture := &kubectlFixture{}
 
-	console := NewConsole("kubectl", "controls the cluster manager.", writer, errWriter, provider.Default)
+	console := New("kubectl", "controls the cluster manager.", writer, errWriter)
 	console.Flags(func(fs *FlagSet) {
 		Var(fs, &fixture.username, Long("username"), "the user to authenticate as.", Short("u"), Env("KUBECTL_USERNAME"))
 	})
@@ -1061,7 +1183,7 @@ func scopedFlags(writer, errWriter *bytes.Buffer) (*Console, *scopedFlagsFixture
 		Flags(func(fs *FlagSet) { fixture.group.bind(fs, "staging") }).
 		Register(pods)
 
-	console := NewConsole("kubectl", "controls the cluster manager.", writer, errWriter, provider.Default)
+	console := New("kubectl", "controls the cluster manager.", writer, errWriter)
 	console.Flags(func(fs *FlagSet) { fixture.root.bind(fs, "default") })
 	console.RegisterGroup(get)
 
@@ -1180,6 +1302,40 @@ func (p *SpyProvider) Boot(ctx context.Context, container provider.Container) er
 
 func (p *SpyProvider) Terminate(ctx context.Context) error {
 	p.TerminateCount++
+
+	return nil
+}
+
+// the provider manager is one manager among others.
+var _ Manager = (*provider.Manager)(nil)
+
+// SpyManager is a manager which boots nothing, as the console depends on the
+// Manager interface alone.
+type SpyManager struct {
+	providers []provider.Provider
+
+	RunCount int
+}
+
+var _ Manager = &SpyManager{}
+
+func (m *SpyManager) Register(p provider.Provider) {
+	m.providers = append(m.providers, p)
+}
+
+// Run calls back the command right away and returns once the context is
+// cancelled, the way a provider manager does once its providers are booted.
+func (m *SpyManager) Run(ctx context.Context, opts ...provider.Option) error {
+	m.RunCount++
+
+	options := provider.DefaultOptions()
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	go options.Callback(ctx, nil)
+
+	<-ctx.Done()
 
 	return nil
 }

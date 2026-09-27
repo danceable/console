@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"maps"
+	"math"
 	"strconv"
 	"strings"
 	"testing"
@@ -394,6 +395,7 @@ func TestDefault(t *testing.T) {
 			size    int64
 			retries uint16
 			ratio   float32
+			average float64
 			timeout time.Duration
 			alerts  level
 		)
@@ -407,6 +409,7 @@ func TestDefault(t *testing.T) {
 		Var(flagSet, &size, Long("size"), "", Default(1024))
 		Var(flagSet, &retries, Long("retries"), "", Default(3))
 		Var(flagSet, &ratio, Long("ratio"), "", Default(1.5))
+		Var(flagSet, &average, Long("average"), "", Default(2))
 		Var(flagSet, &timeout, Long("timeout"), "", Default(10*time.Second))
 		Var(flagSet, &alerts, Long("alerts"), "", Default(1))
 
@@ -417,10 +420,35 @@ func TestDefault(t *testing.T) {
 			t.Errorf("unexpected retries, got %d", retries)
 		case ratio != 1.5:
 			t.Errorf("unexpected ratio, got %v", ratio)
+		case average != 2:
+			t.Errorf("unexpected average, got %v", average)
 		case timeout != 10*time.Second:
 			t.Errorf("unexpected timeout, got %s", timeout)
 		case alerts != high:
 			t.Errorf("unexpected level, got %s", alerts)
+		}
+	})
+
+	t.Run("an unsigned default value reaches a number which holds it", func(t *testing.T) {
+		var (
+			count   int
+			retries uint16
+			ratio   float64
+		)
+
+		flagSet := NewFlagSet("test", io.Discard)
+
+		Var(flagSet, &count, Long("count"), "", Default(uint(80)))
+		Var(flagSet, &retries, Long("retries"), "", Default(uint64(3)))
+		Var(flagSet, &ratio, Long("ratio"), "", Default(uint8(7)))
+
+		switch {
+		case count != 80:
+			t.Errorf("unexpected count, got %d", count)
+		case retries != 3:
+			t.Errorf("unexpected retries, got %d", retries)
+		case ratio != 7:
+			t.Errorf("unexpected ratio, got %v", ratio)
 		}
 	})
 
@@ -448,6 +476,22 @@ func TestDefault(t *testing.T) {
 			{
 				name:   "a truncated number",
 				define: func(fs *FlagSet) { var v int; Var(fs, &v, Long("flag"), "", Default(1.5)) },
+			},
+			{
+				name:   "a boolean given to a number",
+				define: func(fs *FlagSet) { var v int; Var(fs, &v, Long("flag"), "", Default(true)) },
+			},
+			{
+				name:   "a number given as an interface",
+				define: func(fs *FlagSet) { var v int; Var(fs, &v, Long("flag"), "", Default(any(80))) },
+			},
+			{
+				name:   "an unsigned number which overflows a signed type",
+				define: func(fs *FlagSet) { var v int64; Var(fs, &v, Long("flag"), "", Default(uint64(math.MaxInt64+1))) },
+			},
+			{
+				name:   "an unsigned number which overflows the type",
+				define: func(fs *FlagSet) { var v uint8; Var(fs, &v, Long("flag"), "", Default(uint(300))) },
 			},
 		}
 
