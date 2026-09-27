@@ -1,6 +1,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/danceable/console.svg)](https://pkg.go.dev/github.com/danceable/console)
 [![CI](https://github.com/danceable/console/actions/workflows/ci.yml/badge.svg)](https://github.com/danceable/console/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/danceable/console)](https://goreportcard.com/report/github.com/danceable/console)
+[![Coverage Status](https://coveralls.io/repos/github/danceable/console/badge.svg)](https://coveralls.io/github/danceable/console?branch=main)
 
 # Console
 
